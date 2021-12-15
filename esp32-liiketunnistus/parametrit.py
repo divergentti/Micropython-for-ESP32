@@ -1,0 +1,14 @@
+SSID1 = 'WiFiVerkko1'
+SALASANA1 = 'Salasana'
+SSID2 = 'WiFiVerkko2'
+SALASANA2 = 'SalaSana'
+MQTT_SERVERI = '192.168.x.x'
+MQTT_PORTTI = '1883'
+MQTT_KAYTTAJA = 'useri'
+MQTT_SALASANA = 'salari'
+CLIENT_ID = "ESP32-PIR1"
+DHCP_NIMI = "ESP32-PIR1"
+PIR_PINNI = 22
+PIR_LIIKE_NOLLAUSAIKA = 5
+AIHE_LIIKETUNNISTIN = 'kanala/ulko/etela/pir'
+NTPPALVELIN = 'pool.ntp.org'

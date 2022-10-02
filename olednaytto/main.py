@@ -34,6 +34,11 @@ Asynkroninen MQTT: https://github.com/peterhinch/micropython-mqtt/blob/master/mq
 29.11.2020 Lisätty sensorille lähetettävä tieto kosteudesta ja lämpötilasta, jotka parantavat tarkkuutta sekä
            muutettu kaikki lähetettävät arvot käyttämään keskiarvoja, jolloin anturin satunnaiset heitot häviävät.
 2.12.2020  Tiputettu prosessorin nopeus 80 MHz lämmöntuoton vähentämiseksi
+10.12.2020 DHT22 (dht_readinto) on bugi joka aiheuttaa sen, että jos lämpötila on -0.x palautuu arvoksi 3767.x
+           ja tämä johtuu siitä että palautettava, kuten bytearray(b'\x03r\xff\xfdq'), on miinusavoilla sekaisin.
+           Korjattu ongelma vähentämällä kokonaisluku ja lisäämällä desimaali sellaisenaan.
+           Samalla vähennetty 0-asteessa tuleva heitto 3.01 astetta, joka johtuu siitä, että sekä prosessori että
+           näyttö lämmittää anturia. Tämä toteutus ei siis sovi ulos laisinkaan.
 """
 
 from machine import I2C, SPI, Pin
@@ -173,6 +178,12 @@ class SPInaytonohjain:
     async def resetoi_naytto(self):
         self.naytto.reset()
 
+    async def sammuta_naytto(self):
+        self.naytto.poweroff()
+
+    async def kaynnista_naytto(self):
+        self.naytto.poweron()
+
 
 class KaasuSensori:
 
@@ -224,8 +235,22 @@ class LampojaKosteus:
                 anturilukuvirheita += 1
                 if anturilukuvirheita > 50:
                     restart_and_reconnect()
-            if (self.anturi.temperature() > -40) and (self.anturi.temperature() < 150):
-                self.lampo = '{:.1f}'.format(self.anturi.temperature() * DHT22_LAMPO_KORJAUSKERROIN)
+            #  Prosessorin ja näytön aiheuttama mittariheitto ja tarkistus ettei ole älyttömiä arvoja
+            self.lampo = float(self.anturi.temperature()) - 3.01  # heitto noin 0 asteessa
+            #   - asteiden korjaus, tyypillisesti -3276.x C
+            if self.lampo < -45:
+                ttemp = str(self.lampo).split('.')
+                msb = int(ttemp[0]) * -1
+                lsb = ttemp[1]
+                belowzero = str(3276 - msb) + "." + lsb
+                if float(belowzero) > 0.0:
+                    self.lampo = float(belowzero) * -1
+                else:
+                    self.lampo = float(belowzero)
+            if self.lampo > 100:
+                self.lampo = None
+            #  Muotoilu ja tarvittaessa korjauskerroin
+            self.lampo = '{:.1f}'.format(self.lampo * DHT22_LAMPO_KORJAUSKERROIN)
             if (self.anturi.humidity() > 0) and (self.anturi.humidity() < 101):
                 self.kosteus = '{:.1f}'.format(self.anturi.humidity() * DHT22_KOSTEUS_KORJAUSKERROIN)
             await asyncio.sleep(self.lukuvali)
@@ -260,7 +285,7 @@ async def kerro_tilannetta():
             print('Lampo: %s C' % tempjarh.lampo)
         if tempjarh.kosteus is not None:
             print('Kosteus: %s %%' % tempjarh.kosteus)
-        await asyncio.sleep(1)
+        await asyncio.sleep(2)
 
 
 async def laske_keskiarvot():
@@ -307,12 +332,13 @@ async def laske_keskiarvot():
 
 
 async def sivu_1():
+    await naytin.kaynnista_naytto()
     await naytin.teksti_riville("PVM:  %s" % ratkaise_aika()[0], 0, 5)
     await naytin.teksti_riville("KLO:  %s" % ratkaise_aika()[1], 1, 5)
     await naytin.piirra_alleviivaus(1, 20)
     await naytin.teksti_riville("eCO2: %s ppm" % kaasusensori.eCO2, 2, 5)
     #  Raja-arvot ovat yleisiä CO2:n haitallisuuden arvoja
-    if kaasusensori.eCO2 > 1200:
+    if kaasusensori.eCO2 > 1600:
         await naytin.kaanteinen_vari(True)
     else:
         await naytin.kaanteinen_vari(False)
@@ -336,6 +362,7 @@ async def sivu_1():
 
 
 async def sivu_2():
+    await naytin.kaynnista_naytto()
     await naytin.teksti_riville("KESKIARVOT", 0, 5)
     await naytin.piirra_alleviivaus(0, 10)
     if kaasusensori.eCO2_keskiarvo > 1200:
@@ -356,14 +383,15 @@ async def sivu_2():
 
 
 async def sivu_3():
+    await naytin.kaynnista_naytto()
     """ Statussivulla näytetään yleisiä tietoja """
     await naytin.teksti_riville("STATUS", 0, 5)
     await naytin.piirra_alleviivaus(0, 6)
     await naytin.teksti_riville("Up s.: %s" % (utime.time() - aloitusaika), 1, 5)
-    await naytin.teksti_riville("AP: %s" % network.WLAN(network.STA_IF).config('essid'), 2, 5)
-    await naytin.teksti_riville("rssi: %s" % network.WLAN(network.STA_IF).status('rssi'), 3, 5)
-    await naytin.teksti_riville("Memfree: %s" % gc.mem_free(), 4, 5)
-    await naytin.teksti_riville("Hall: %s" % esp32.hall_sensor(), 5, 5)
+    await naytin.teksti_riville("rssi: %s" % network.WLAN(network.STA_IF).status('rssi'), 2, 5)
+    await naytin.teksti_riville("Memfree: %s" % gc.mem_free(), 3, 5)
+    await naytin.teksti_riville("Hall: %s" % esp32.hall_sensor(), 4, 5)
+    await naytin.teksti_riville("MCU C: %s" % ("{:.1f}".format(((float(esp32.raw_temperature())-32.0) * 5/9))), 5, 5)
     await naytin.kaanna_180_astetta(True)
     #  Himmennetään näyttöä yöksi
     if (ratkaise_aika()[1] > '20:00:00') and (ratkaise_aika()[1] < '08:00:00'):
@@ -414,6 +442,8 @@ async def main():
         await sivu_1()
         await sivu_2()
         await sivu_3()
+        await asyncio.sleep(60)  # kuinka pitkään ollaan pimeänä
+        await naytin.sammuta_naytto()
         gc.collect()
 
 asyncio.run(main())

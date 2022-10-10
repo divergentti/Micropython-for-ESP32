@@ -9,7 +9,7 @@ Removed comments and refactored variablenames to short version to save memory!
 This version is ported for micropython version 1.91.1 which deprecated I2C to SoftI2C.
 Added error checking for sensors and display init. Sensor or display error do not stop the code.
 
-Re-organized display class, moved display drawing procedures into main level. Referral using object name (disp). 
+Re-organized display class, moved display drawing procedures into main level. Referral using object name (disp).
 Added some checkups if user press the screen too early etc.
 
 Updated: 10.10.2022: Jari Hiltunen
@@ -170,12 +170,6 @@ class TFTDisplay(object):
         self.rw_col = None
         self.rows = None
         self.dtl_scr_sel = None
-
-    def set_screen_off(self):
-        self.d.DISPLAY_OFF
-
-    def set_screen_on(self):
-        self.d.DISPLAY_ON
 
     def first_touch(self, x, y):
         if DEBUG_SCREEN_ACTIVE == 1:

@@ -1,3 +1,8 @@
+Update 10.10.2022:
+- Reorganized the code, updated I2C to Soft2IC due to Micropython 1.19.1 requirements.
+- Implemented better details screen activation procedures and checkups.
+
+
 Update 7.2.2021:
 - New case is OK, but I broke PMS7003 connector and it is 1.27 mm pitch. I have to wait pitch strip connector bar to arrive from China before I can finalize the project.
 - BME280 in the lollipop seems to perform great, accuracy is now good.

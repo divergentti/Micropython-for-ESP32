@@ -1,3 +1,7 @@
+Update 11.10.2022:
+- Added LCD backlight control. Use two transistors, PNP and NPN as a driver. Select proper GPIO (in the parameters.py now 27).
+- Added MQTT SSL and BACKLIGHT_TIMEOUT parameters to the runtimeconfig.json
+
 Update 10.10.2022:
 - Reorganized the code, updated I2C to Soft2IC due to Micropython 1.19.1 requirements.
 - Implemented better details screen activation procedures and checkups.

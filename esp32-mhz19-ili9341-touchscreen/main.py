@@ -12,7 +12,15 @@ Added error checking for sensors and display init. Sensor or display error do no
 Re-organized display class, moved display drawing procedures into main level. Referral using object name (disp).
 Added some checkups if user press the screen too early etc.
 
-Updated: 10.10.2022: Jari Hiltunen
+Backlight control is done with 2 transistors, PNP and NPN (small TO-92 are ok). As an example:
+- BC327 (PNP) emitter to 5V (or 3.3V) and 100k resistor to base and collector to TFT led VCC pin.
+- 10 k resistor to BC337 (NPN) transistor emitter
+- From PIN (27) 100 k resistor to BC337 base, and 1M resistor to GND (to BC337 emitter)
+- BC337 (NPN) emitter to GND
+When Pin(27) is off, then backlight is lid, because current flows to the LCD backlight
+Check that GPIO (Pin) you select is also output pin!
+
+Updated: 11.10.2022: Jari Hiltunen
 """
 from machine import SPI, SoftI2C, Pin, freq, reset, reset_cause
 import uasyncio as asyncio
@@ -47,7 +55,7 @@ try:
     from parameters import CO2_SEN_RX_PIN, CO2_SEN_TX_PIN, CO2_SEN_UART, TFT_CS_PIN, TFT_DC_PIN, \
         TS_MISO_PIN, TS_CS_PIN, TS_IRQ_PIN, TS_MOSI_PIN, TS_SCLK_PIN, TFT_CLK_PIN, \
         TFT_RST_PIN, TFT_MISO_PIN, TFT_MOSI_PIN, TFT_SPI, TS_SPI, \
-        P_SEN_UART, P_SEN_TX, P_SEN_RX, I2C_SCL_PIN, I2C_SDA_PIN
+        P_SEN_UART, P_SEN_TX, P_SEN_RX, I2C_SCL_PIN, I2C_SDA_PIN, BACKLIGHT_PIN
     f.close()
 except OSError:  # open failed
     print("parameter.py-file missing! Can not continue!")
@@ -67,6 +75,7 @@ try:
         MQTT_PASSWORD = data['MQTT_PASSWORD']
         MQTT_USER = data['MQTT_USER']
         MQTT_PORT = data['MQTT_PORT']
+        MQTT_USE_SSL = data['MQTT_SSL']
         MQTT_INTERVAL = data['MQTT_INTERVAL']
         CLIENT_ID = data['CLIENT_ID']
         TOPIC_ERRORS = data['TOPIC_ERRORS']
@@ -79,6 +88,7 @@ try:
         SCREEN_UPDATE_INTERVAL = data['SCREEN_UPDATE_INTERVAL']
         DEBUG_SCREEN_ACTIVE = data['DEBUG_SCREEN_ACTIVE']
         SCREEN_TIMEOUT = data['SCREEN_TIMEOUT']
+        BACKLIGHT_TIMEOUT = data['BACKLIGHT_TIMEOUT']
         TOPIC_TEMP = data['TOPIC_TEMP']
         TOPIC_RH = data['TOPIC_RH']
         TOPIC_PRESSURE = data['TOPIC_PRESSURE']
@@ -130,9 +140,7 @@ def resolve_date():
 
 
 class TFTDisplay(object):
-
     def __init__(self, touchspi, dispspi):
-
         # Display - some digitizers may be rotated 270 degrees!
         self.d = Display(spi=dispspi, cs=Pin(TFT_CS_PIN), dc=Pin(TFT_DC_PIN), rst=Pin(TFT_RST_PIN),
                          width=320, height=240, rotation=90)
@@ -155,6 +163,8 @@ class TFTDisplay(object):
         self.xpt = Touch(spi=touchspi, cs=Pin(TS_CS_PIN), int_pin=Pin(TS_IRQ_PIN),
                          width=240, height=320, x_min=100, x_max=1962, y_min=100, y_max=1900)
         self.xpt.int_handler = self.first_touch
+        # Backlight control
+        self.backlight = Pin(BACKLIGHT_PIN, Pin.OUT)
         self.t_tched = False
         self.scr_actv_time = None
         self.r_num = 1
@@ -170,15 +180,23 @@ class TFTDisplay(object):
         self.rw_col = None
         self.rows = None
         self.dtl_scr_sel = None
+        self.backlight_status = True
 
     def first_touch(self, x, y):
         if DEBUG_SCREEN_ACTIVE == 1:
             print("Touched!")
         self.t_tched = True
 
+    def backlight_on(self):
+        self.backlight.off()
+        self.backlight_status = True
+
+    def backlight_off(self):
+        self.backlight.on()
+        self.backlight_status = False
+
 
 class AirQuality(object):
-
     def __init__(self, pmssensor):
         self.aqinndex = None
         self.pms = pmssensor
@@ -263,7 +281,8 @@ except OSError as e:
     print("Error: %s - Particle sensor init error!" % e)
     PMS7003_sensor_faulty = True
 # Air Quality calculations
-aq = AirQuality(pms)
+if not PMS7003_sensor_faulty:
+    aq = AirQuality(pms)
 
 # CO2 sensor
 try:
@@ -293,6 +312,7 @@ d_spi = SPI(TFT_SPI)  # VSPI - baudrate 40 - 90 MHz appears to be working, scree
 d_spi.init(baudrate=50000000, sck=Pin(TFT_CLK_PIN), mosi=Pin(TFT_MOSI_PIN), miso=Pin(TFT_MISO_PIN))
 try:
     disp = TFTDisplay(t_spi, d_spi)
+    disp.scr_actv_time = time()
 except OSError as e:
     print("Error: %s - Touchscreen or display init error!" % e)
     screen_faulty = True
@@ -417,8 +437,10 @@ async def rot_scr():
 
 
 async def update_screen_loop():
+    n = 0
     while True:
         if disp.t_tched is True:
+            disp.backlight_on()
             if disp.d_scr_active is False:
                 try:
                     await rot_scr()
@@ -436,6 +458,10 @@ async def update_screen_loop():
                 disp.d_scr_active = False
                 disp.t_tched = False
         else:
+            if time() - disp.scr_actv_time <= BACKLIGHT_TIMEOUT:
+                disp.backlight_on()
+            else:
+                disp.backlight_off()
             r, r_c = await upd_welcome()
             await show_screen(r, r_c)
 
@@ -672,7 +698,7 @@ async def net_monitor():
         if broker_uptime is not 0:
             row7 = "Broker up %s" % broker_uptime[:-8]
         else:
-            row7 = "Broker down"
+            row7 = "Broker not connected"
         row7_colour = 'blue'
         rows = row1, row2, row3, row4, row5, row6, row7
         row_colours = row1_colour, row2_colour, row3_colour, row4_colour, row5_colour, row6_colour, row7_colour
@@ -732,7 +758,10 @@ config['user'] = MQTT_USER
 config['password'] = MQTT_PASSWORD
 config['port'] = MQTT_PORT
 config['client_id'] = CLIENT_ID
-config['ssl'] = False
+if MQTT_USE_SSL == "True":
+    config['ssl'] = True
+else:
+    config['ssl'] = False
 client = MQTTClient(config)
 
 

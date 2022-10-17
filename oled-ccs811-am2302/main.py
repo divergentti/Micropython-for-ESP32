@@ -39,9 +39,13 @@ Asynkroninen MQTT: https://github.com/peterhinch/micropython-mqtt/blob/master/mq
            Korjattu ongelma vähentämällä kokonaisluku ja lisäämällä desimaali sellaisenaan.
            Samalla vähennetty 0-asteessa tuleva heitto 3.01 astetta, joka johtuu siitä, että sekä prosessori että
            näyttö lämmittää anturia. Tämä toteutus ei siis sovi ulos laisinkaan.
+17.10.2022 Vaihdettu I2C -> SoftI2C samalla kun micropython vaihtuu versioon 1.19.1
+           Poistettu konstruktorista i2c väylä
+           Korjattu envdatan kirjoituksesta puuttuneet muuttujanimet. Kauneusvirhe.
+           Korjattu self.sensori.put_envdata(humidity=float(kosteusin), temp=float(lampoin))
 """
 
-from machine import I2C, SPI, Pin
+from machine import SoftI2C, SPI, Pin
 import sh1106
 import ccs811
 import time
@@ -178,11 +182,17 @@ class SPInaytonohjain:
     async def resetoi_naytto(self):
         self.naytto.reset()
 
+    async def sammuta_naytto(self):
+        self.naytto.poweroff()
+
+    async def kaynnista_naytto(self):
+        self.naytto.poweron()
+
 
 class KaasuSensori:
 
-    def __init__(self, i2cvayla=0, scl=22, sda=21, taajuus=400000, osoite=90):
-        self.i2c = I2C(i2cvayla, scl=Pin(scl), sda=Pin(sda), freq=taajuus)
+    def __init__(self, scl=22, sda=21, taajuus=400000, osoite=90):
+        self.i2c = SoftI2C(scl=Pin(scl), sda=Pin(sda), freq=taajuus)
         self.laiteosoite = osoite
         self.sensori = ccs811.CCS811(self.i2c)
         self.eCO2 = 0
@@ -203,7 +213,9 @@ class KaasuSensori:
 
     async def laheta_lampo_ja_kosteus_korjaus(self, lampoin, kosteusin):
         if (float(lampoin) > -40) and (float(lampoin) < 150) and (float(kosteusin) > 0) and (float(kosteusin) < 101):
-            self.sensori.put_envdata(float(kosteusin), float(lampoin))
+            self.sensori.put_envdata(humidity=float(kosteusin), temp=float(lampoin))
+
+
 
 
 class LampojaKosteus:
@@ -271,7 +283,6 @@ naytin = SPInaytonohjain()
 kaasusensori = KaasuSensori()
 tempjarh = LampojaKosteus()
 
-
 async def kerro_tilannetta():
     while True:
         # print("RSSI %s" % network.WLAN(network.STA_IF).status('rssi'), end=",")
@@ -326,12 +337,13 @@ async def laske_keskiarvot():
 
 
 async def sivu_1():
+    await naytin.kaynnista_naytto()
     await naytin.teksti_riville("PVM:  %s" % ratkaise_aika()[0], 0, 5)
     await naytin.teksti_riville("KLO:  %s" % ratkaise_aika()[1], 1, 5)
     await naytin.piirra_alleviivaus(1, 20)
     await naytin.teksti_riville("eCO2: %s ppm" % kaasusensori.eCO2, 2, 5)
     #  Raja-arvot ovat yleisiä CO2:n haitallisuuden arvoja
-    if kaasusensori.eCO2 > 1200:
+    if kaasusensori.eCO2 > 1600:
         await naytin.kaanteinen_vari(True)
     else:
         await naytin.kaanteinen_vari(False)
@@ -355,6 +367,7 @@ async def sivu_1():
 
 
 async def sivu_2():
+    await naytin.kaynnista_naytto()
     await naytin.teksti_riville("KESKIARVOT", 0, 5)
     await naytin.piirra_alleviivaus(0, 10)
     if kaasusensori.eCO2_keskiarvo > 1200:
@@ -375,14 +388,15 @@ async def sivu_2():
 
 
 async def sivu_3():
+    await naytin.kaynnista_naytto()
     """ Statussivulla näytetään yleisiä tietoja """
     await naytin.teksti_riville("STATUS", 0, 5)
     await naytin.piirra_alleviivaus(0, 6)
     await naytin.teksti_riville("Up s.: %s" % (utime.time() - aloitusaika), 1, 5)
-    await naytin.teksti_riville("AP: %s" % network.WLAN(network.STA_IF).config('essid'), 2, 5)
-    await naytin.teksti_riville("rssi: %s" % network.WLAN(network.STA_IF).status('rssi'), 3, 5)
-    await naytin.teksti_riville("Memfree: %s" % gc.mem_free(), 4, 5)
-    await naytin.teksti_riville("Hall: %s" % esp32.hall_sensor(), 5, 5)
+    await naytin.teksti_riville("rssi: %s" % network.WLAN(network.STA_IF).status('rssi'), 2, 5)
+    await naytin.teksti_riville("Memfree: %s" % gc.mem_free(), 3, 5)
+    await naytin.teksti_riville("Hall: %s" % esp32.hall_sensor(), 4, 5)
+    await naytin.teksti_riville("MCU C: %s" % ("{:.1f}".format(((float(esp32.raw_temperature())-32.0) * 5/9))), 5, 5)
     await naytin.kaanna_180_astetta(True)
     #  Himmennetään näyttöä yöksi
     if (ratkaise_aika()[1] > '20:00:00') and (ratkaise_aika()[1] < '08:00:00'):
@@ -419,9 +433,14 @@ async def mqtt_raportoi():
 
 async def main():
     MQTTClient.DEBUG = False
-    await client.connect()
+    try:
+        await client.connect()
+    except OSError as e:
+        print("After soft reboot WiFi Internal error. Rebooting")
+        asyncio.sleep(5)
+        machine.reset()
     #  Aktivoi seuraava rivi jos haluat nähdä taustatoimintoja
-    asyncio.create_task(kerro_tilannetta())
+    # asyncio.create_task(kerro_tilannetta())
     asyncio.create_task(kaasusensori.lue_arvot())
     asyncio.create_task(tempjarh.lue_arvot())
     asyncio.create_task(laske_keskiarvot())
@@ -433,6 +452,13 @@ async def main():
         await sivu_1()
         await sivu_2()
         await sivu_3()
+        await asyncio.sleep(60)  # kuinka pitkään ollaan pimeänä
+        await naytin.sammuta_naytto()
         gc.collect()
 
-asyncio.run(main())
+
+if __name__ == "__main__":
+    try:
+        asyncio.run(main())
+    except MemoryError:
+        machine.reset()

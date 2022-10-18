@@ -1,5 +1,9 @@
 """
-This script is used for I2C connected OLED display, BME280 or BMP280 sensor and MQ135 sensor.
+This script is used for I2C connected OLED display, BME280 or DHT22 (AM2302) sensor and MQ135 sensor.
+If you use DMP280, you need to have Rh from other sensor, like DHT22.
+
+Values could be transferred by MQTT to the MQTT broker and from the broker to the Influxdb etc.
+
 The MQ135-sensor VCC is 5 volts. Values are read from the AO (Analog Out) pin.
 Analog Out (AO) is too high as default. ESP32 ADC (Analog to DC converter) read values between 0 to 1 volts.
 Over 1 volt gives value 4095. You need a resistor splitter for readings.
@@ -17,14 +21,31 @@ MQ135 sensor data:
     - Alkohol 10 - 300 ppm
     - For proper calculation you need temperature and Rh value from other sensor, like BME280, DHT22 etc.
 
-Asyncronous code.
+If the MQ135 board has 102 (1k) load resistor in the middle on top (RL), it does not work for CO2!
+- solder out the 1k resistor and replace with 20k (20 000) resistor. If you use another ohms, change in runtimeconfig.
+- MQ135.py attennuates signal by 11db.
 
-Version 0.1 Jari Hiltunen
+Preheating time is 24 hours! After the 24 hours preheat process, check what console says about corrected RZERO and
+use that value in runtimeconfig.json.
+
+MQ135 is connected per parameters.py to Pin34 and in MQ135.py attennuated 11db
+DHT22 (AM2302) is connected to Pin23
+I2C for the OLED and BME280 (or BMP280) is connected to SDA = Pin21 and SCL = Pin22.
+Use command i2c.scan() to check which devices responds from the I2C channel.
+
+Program read sensor values once per second, rounds them to 1 decimal with correction values, then calculates averages.
+Averages are sent to the MQTT broker.
+
+Touch is enabled so that you can use any wire to activate the OLED display.
+
+Asyncronous code. Tested with micropython 1.19.1, DHT22 and BMP280
+
+Version 0.2 Jari Hiltunen
 
 """
 
 
-from machine import SoftI2C, Pin, freq, reset, reset_cause
+from machine import SoftI2C, Pin, freq, reset, ADC, TouchPad
 import uasyncio as asyncio
 from utime import time, mktime, localtime, sleep
 import gc
@@ -37,6 +58,7 @@ gc.collect()
 from json import load
 import esp
 import esp32
+import dht
 from drivers.MQTT_AS import MQTTClient, config
 gc.collect()
 
@@ -44,13 +66,16 @@ gc.collect()
 mqtt_up = False
 broker_uptime = 0
 co2_average = None
+temp_average = None
+rh_average = None
 BME280_sensor_faulty = False
 BME280_sensor_type = "BME280"
 MQ135_sensor_faulty = False
+DHT22_sensor_faulty = False
 
 try:
     f = open('parameters.py', "r")
-    from parameters import I2C_SCL_PIN, I2C_SDA_PIN, MQ135_AO_PIN
+    from parameters import I2C_SCL_PIN, I2C_SDA_PIN, MQ135_AO_PIN, DHT_PIN, TOUCH_PIN
     f.close()
 except OSError:  # open failed
     print("parameter.py-file missing! Can not continue!")
@@ -94,6 +119,8 @@ try:
         P_THOLD = data['PRESSURE_TRESHOLD']
         CO2_CORRECTION = data['CO2_CORRECTION']
         PRESSURE_CORRECTION = data['PRESSURE_CORRECTION']
+        MQ135_RESISTOR = data['MQ135_RESISTOR']
+        MQ135_RZERO = data['MQ135_RZERO']
 
 except OSError:
     print("Runtime parameters missing. Can not continue!")
@@ -252,6 +279,7 @@ def update_mqtt_status(topic, msg, retained):
 
 async def show_what_i_do():
     # Output is REPL
+    adcmq135 = ADC(Pin(MQ135_AO_PIN))
 
     while True:
         if START_NETWORK == 1:
@@ -266,19 +294,27 @@ async def show_what_i_do():
         print("-------")
         if BME280_sensor_faulty:
             print("BME280 sensor faulty!")
-        if bmes.values[0][:-1] is not None:
-            print("Temp: %s" % bmes.values[0][:-1])
-        if bmes.values[2][:-1] is not None:
-            print("Rh: %s" % bmes.values[2][:-1])
-        if bmes.values[1][:-3] is not None:
-            print("Pressure: %s" % bmes.values[1][:-3])
-        print("-------")
+        if DHT22_sensor_faulty:
+            print("DHT22 sensor faulty!")
+        if temp_average is not None:
+            print("Temp: %s" % temp_average)
+        if rh_average is not None:
+            print("Rh: %s" % rh_average)
+        if not BME280_sensor_faulty:
+            if bmes.values[1][:-3] is not None:
+                print("Pressure: %s" % bmes.values[1][:-3])
         if co2_average is not None:
             print("CO2 is %s" % co2_average)
+        print("-----")
+        print("ADC value from MQ135 pin %s" % adcmq135.read())
+        print("-----")
+        if (temp_average is not None) and (rh_average is not None):
+            print("Corrected RZERO: %s" % co2s.get_corrected_rzero(temp_average, rh_average))
         await asyncio.sleep(5)
 
-# Kick in some speed, max 240000000, normal 160000000, min with WiFi 80000000
-freq(240000000)
+# Adjust speed to low heat production, max 240000000, normal 160000000, min with WiFi 80000000
+#  freq(240000000)
+freq(80000000)
 
 # Network handshake
 net = WifiNet.ConnectWiFi(SSID1, PASSWORD1, SSID2, PASSWORD2, NTPSERVER, DHCP_NAME, START_WEBREPL, WEBREPL_PASSWORD)
@@ -292,10 +328,23 @@ try:
 except OSError as e:
     print("Error: %s - BME sensor init error!" % e)
     BME280_sensor_faulty = True
+#  If BMP280 and DHT22 is used, then Rh is read from DHT22 and Temp from BMP280
+#  Else if only BME280 is used, all values are read from BME280
 
-# MQ135 init
+DHTSensor = dht.DHT22(Pin(DHT_PIN))
 try:
-    co2s = CO2Sensor.MQ135_ao(ao_pin=Pin(MQ135_AO_PIN))
+    DHTSensor.measure()
+except OSError as e:
+    print("Error: %s - DHT22 sensor init error!" % e)
+    DHT22_sensor_faulty = True
+
+if (DHTSensor.humidity() == 0.0) or (DHTSensor.temperature() == 0.0):
+    print("Error: %s - DHT22 sensor init error!")
+    DHT22_sensor_faulty = True
+
+# MQ135 init. The loadresistor is resistor between GND and MQ135 B1 pin. Resistorzero is after calibration.
+try:
+    co2s = CO2Sensor.MQ135_ao(ao_pin=Pin(MQ135_AO_PIN), loadresistor=MQ135_RESISTOR, resistorzero=MQ135_RZERO)
 except OSError as e:
     print("Error: %s - MQ135 sensor init error!" % e)
     MQ135_sensor_faulty = True
@@ -306,42 +355,103 @@ try:
 except OSError as e:
     print("Error: %s - OLED Display init error!" % e)
 
+# Touch thing
+touch = TouchPad(Pin(TOUCH_PIN))
 
-async def read_co2_loop():
-    global co2_average
-    ppm_list = []
+
+async def touch_check_loop():
+    press_time = time()
     while True:
-        if len(ppm_list) <= 60:
-            try:
-                # if sensor is BME280, use below line:
-                if BME280_sensor_type == "BME280":
-                    ppm_list.append(co2s.get_corrected_ppm(bmes.values[0][:-1], bmes.values[1][:-1]))
-                else:
-                    ppm_list.append(co2s.get_ppm())
-            except ValueError:
-                pass
+        if touch.read() < 400:    # Sensitivity
+            press_time = time()
+        elif (touch.read() > 400) and ((time() - press_time) > SCREEN_TIMEOUT):
+            await display.shut_screen()
         else:
+            await display.activate_screen()
+            await page_1()
+            await display.activate_screen()
+            await page_2()
+        await asyncio.sleep_ms(10)
+
+
+async def read_sensors_loop():
+    global co2_average
+    global temp_average
+    global rh_average
+    ppm_list = []
+    temp_list = []
+    rh_list = []
+    #  Read values from sensor once per second, add them to the array, delete oldest when size 60 (seconds)
+    while True:
+        try:
+            # if sensor is BME280, use below line ([0] = temp, [1] = pressure, [2] = rh:
+            if (BME280_sensor_type == "BME280") and (not BME280_sensor_faulty):
+                temp_list.append(round(float(bmes.values[0][:-1]), 1) + TEMP_CORRECTION)
+                rh_list.append(round(float(bmes.values[2][:-1]), 1) + RH_CORRECTION)
+                ppm_list.append(co2s.get_corrected_ppm(round(float(bmes.values[0][:-1]), 1) + TEMP_CORRECTION,
+                                                       round(float(bmes.values[2][:-1]), 1)+RH_CORRECTION) +
+                                CO2_CORRECTION)
+            elif (BME280_sensor_type == "BMP280") and (not BME280_sensor_faulty) and (not DHT22_sensor_faulty):
+                # Rh from DHT22
+                try:
+                    DHTSensor.measure()
+                except OSError:
+                    await asyncio.sleep(1)
+                    DHTSensor.measure()
+                temp_list.append(round(float(bmes.values[0][:-1]), 1) + TEMP_CORRECTION)
+                rh_list.append(round(float(DHTSensor.humidity()), 1) + RH_CORRECTION)
+                ppm_list.append(co2s.get_corrected_ppm(round(float(bmes.values[0][:-1]), 1) + TEMP_CORRECTION,
+                                                       round(float(DHTSensor.humidity()), 1)+RH_CORRECTION)+
+                                CO2_CORRECTION)
+            elif (BME280_sensor_faulty is True) and (not DHT22_sensor_faulty):  # Temp and Rh from DHT22
+                try:
+                    DHTSensor.measure()
+                except OSError:
+                    await asyncio.sleep(1)
+                    DHTSensor.measure()
+                temp_list.append(round(float(DHTSensor.temperature()), 1)+TEMP_CORRECTION)
+                rh_list.append(round(float(DHTSensor.humidity()), 1)+RH_CORRECTION)
+                ppm_list.append(co2s.get_corrected_ppm(round(float(DHTSensor.temperature()), 1)+TEMP_CORRECTION,
+                                                       round(float(DHTSensor.humidity()), 1) +RH_CORRECTION)+
+                                CO2_CORRECTION)
+            else:   # Missing temperature and rh information
+                ppm_list.append(co2s.get_ppm()+CO2_CORRECTION)
+        except ValueError:
+            pass
+        if len(ppm_list) >= 60:
             ppm_list.pop(0)
-        co2_average = sum(ppm_list) / len(ppm_list)
+        if len(temp_list) >= 60:
+            temp_list.pop(0)
+        if len(rh_list) >= 60:
+            rh_list.pop(0)
+        if len(ppm_list) > 0:
+            co2_average = round(sum(ppm_list) / len(ppm_list), 1)
+        if len(temp_list) > 0:
+            temp_average = round(sum(temp_list) / len(temp_list), 1)
+        if len(rh_list) > 0:
+            rh_average = round(sum(rh_list) / len(rh_list), 1)
+        gc.collect()
         await asyncio.sleep(1)
 
 
 async def mqtt_publish_loop():
+    #  Publish only valid average values.
     while True:
         if mqtt_up is False:
             await asyncio.sleep(10)
         else:
             await asyncio.sleep(MQTT_INTERVAL)
-            if not BME280_sensor_faulty:
-                if bmes.values[0][:-1] is not None:
-                    await client.publish(TOPIC_TEMP, bmes.values[0][:-1], retain=0, qos=0)
-                if (bmes.values[2][:-1] is not None) and (BME280_sensor_type == "BME280"):
-                    await client.publish(TOPIC_RH, bmes.values[2][:-1], retain=0, qos=0)
-                if bmes.values[1][:-3] is not None:
-                    await client.publish(TOPIC_PRESSURE, bmes.values[1][:-3], retain=0, qos=0)
-            if not MQ135_sensor_faulty:
-                await client.publish(TOPIC_CO2, co2_average, retain=0, qos=0)
-
+            if temp_average is not None:
+                if -40 < temp_average < 100:
+                    await client.publish(TOPIC_TEMP, temp_average, retain=0, qos=0)
+            if rh_average is not None:
+                if 0 < rh_average < 100:
+                    await client.publish(TOPIC_RH, rh_average, retain=0, qos=0)
+            if bmes.values[1][:-3] is not None:
+                await client.publish(TOPIC_PRESSURE, bmes.values[1][:-3], retain=0, qos=0)
+            if co2_average is not None:
+                if 400 < co2_average < 8000:
+                    await client.publish(TOPIC_CO2, co2_average, retain=0, qos=0)
 # For MQTT_AS
 config['server'] = MQTT_SERVER
 config['user'] = MQTT_USER
@@ -357,30 +467,25 @@ client = MQTTClient(config)
 
 #  What we show on the OLED display
 async def page_1():
-    await display.start_screen()
-    await display.text_to_row("PVM:  %s" % resolve_date()[0], 0, 5)
-    await display.text_to_row("KLO:  %s" % resolve_date()[1], 1, 5)
-    await display.draw_underline(1, 20)
+    await display.text_to_row("PVM:%s" % resolve_date()[0], 0, 5)
+    await display.text_to_row("KLO:%s" % resolve_date()[1], 1, 5)
     if co2_average is not None:
-        await display.text_to_row("%s ppm" % co2_average, 2, 5)
-    if bmes.values[0] is None:
+        await display.text_to_row("%s co2 ppm" % co2_average, 2, 5)
+    if temp_average is None:
         await display.text_to_row("Waiting values", 3, 5)
     else:
-        await display.text_to_row("%s" % (bmes.values[0]), 3, 5)
-    if bmes.values[2] is None:
+        await display.text_to_row("%s C" % temp_average, 3, 5)
+    if rh_average is None:
         await display.text_to_row("Waiting values", 4, 5)
-    elif BME280_sensor_type is "BME280":
-        await display.text_to_row("Rh: %s (%sM)" % (bmes.values[2], "{:.1f}".format(bmes.altitude)), 4, 5)
-    if bmes.values[1] is None:
-        await display.text_to_row("Waiting values", 5, 5)
     else:
-        await display.text_to_row("%s" % bmes.values[1], 5, 5)
-    await display.activate_screen()
-    await asyncio.sleep_ms(100)
+        await display.text_to_row("Rh: %s" % rh_average, 4, 5)
+    if not BME280_sensor_faulty:
+        if bmes.values[1] is not None:
+            await display.text_to_row("%s ppm" % bmes.values[1], 5, 5)
+    await asyncio.sleep_ms(10)
 
 
 async def page_2():
-    await display.start_screen()
     await display.text_to_row("STATUS", 0, 5)
     await display.draw_underline(0, 6)
     # await display.text_to_row("Up s.: %s" % (utime.time() - aloitusaika), 1, 5)
@@ -389,9 +494,7 @@ async def page_2():
     await display.text_to_row("Memfree: %s" % gc.mem_free(), 3, 5)
     await display.text_to_row("Hall: %s" % esp32.hall_sensor(), 4, 5)
     await display.text_to_row("MCU C: %s" % ("{:.1f}".format(((float(esp32.raw_temperature())-32.0) * 5/9))), 5, 5)
-    await display.rotate_180(True)
-    await display.activate_screen()
-    await asyncio.sleep_ms(100)
+    await asyncio.sleep_ms(10)
 
 
 async def main():
@@ -403,17 +506,9 @@ async def main():
     if START_MQTT == 1:
         loop.create_task(mqtt_up_loop())
         loop.create_task(mqtt_publish_loop())
-    loop.create_task(read_co2_loop())
-    # loop.create_task(update_screen_loop())
-
-    while True:
-        await page_1()
-        # await page_2()
-        # await asyncio.sleep(60)  # how long we show values
-        # await display.shut_screen()
-        gc.collect()
-
-    # loop.run_forever()
+    loop.create_task(read_sensors_loop())
+    loop.create_task(touch_check_loop())
+    loop.run_forever()
 
 if __name__ == "__main__":
     try:

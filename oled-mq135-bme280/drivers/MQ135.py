@@ -2,10 +2,16 @@ import math
 from machine import ADC
 
 
-class MQ135_ao(object):
+class MQ135_ao:
 
-    def __init__(self, ao_pin=35):
+    def __init__(self, ao_pin=35, loadresistor=20, resistorzero=76.63):
         self.pin = ao_pin
+        # The load resistance on the board. 20 = 20k
+        self.RLOAD = loadresistor
+        # Calibration resistance at atmospheric CO2 level
+        # RZERO = 76.63
+        self.RZERO = resistorzero
+
     """
     Source rubfi: https://raw.githubusercontent.com/rubfi/MQ135/master/mq135.py
 
@@ -21,10 +27,7 @@ class MQ135_ao(object):
         https://github.com/balk77/MQ135
     """
     """ Class for dealing with MQ13 Gas Sensors """
-    # The load resistance on the board
-    RLOAD = 10.0
-    # Calibration resistance at atmospheric CO2 level
-    RZERO = 76.63
+
     # Parameters for calculating ppm of CO2 from sensor resistance
     PARA = 116.6020682
     PARB = 2.769034857
@@ -38,8 +41,8 @@ class MQ135_ao(object):
     CORF = -0.001923077
     CORG = 1.130128205
 
-    # Atmospheric CO2 level for calibration purposes
-    ATMOCO2 = 397.13
+    # Atmospheric CO2 level for calibration purposes 10-2022
+    ATMOCO2 = 413.79
 
     def get_correction_factor(self, temperature, humidity):
         """Calculates the correction factor for ambient air temperature and relative humidity
@@ -57,6 +60,7 @@ class MQ135_ao(object):
     def get_resistance(self):
         """Returns the resistance of the sensor in kOhms // -1 if not value got in pin"""
         adc = ADC(self.pin)
+        adc.atten(3)  # attennaute 11 db
         value = adc.read()
         if value == 0:
             return -1

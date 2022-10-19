@@ -247,7 +247,12 @@ async def mqtt_up_loop():
         config['wifi_pw'] = net.u_pwd
         MQTTClient.DEBUG = True
         client = MQTTClient(config)
-        await client.connect()
+        try:
+            await client.connect()
+        except OSError as e:
+            print("Soft reboot caused error %s" % e)
+            await asyncio.sleep(5)
+            reset()
         while mqtt_up is False:
             await asyncio.sleep(5)
             try:
@@ -285,34 +290,25 @@ async def show_what_i_do():
     adcmq135 = ADC(Pin(MQ135_AO_PIN))
 
     while True:
+        print("\n1 ---------WIFI------------- 1")
         if START_NETWORK == 1:
-            print("WiFi Connected %s" % net.net_ok)
-            print("WiFi failed connects %s" % net.con_att_fail)
-            print("Signal strength %s" % net.strength)
+            print("   WiFi Connected %s, failed contacts: %s, signal strength: %s" % (net.net_ok, net.con_att_fail, net.strength))
         if START_MQTT == 1:
-            print("MQTT Connected %s" % mqtt_up)
-            print("MQTT broker uptime %s" % broker_uptime)
-        print("Memory free: %s" % gc.mem_free())
-        print("Memory alloc: %s" % gc.mem_alloc())
-        print("-------")
-        if BME280_sensor_faulty:
-            print("BME280 sensor faulty or disconnected!")
-        if DHT22_sensor_faulty:
-            print("DHT22 sensor faulty or disconnected!")
-        if temp_average is not None:
-            print("Temp: %s" % temp_average)
-        if rh_average is not None:
-            print("Rh: %s" % rh_average)
+            print("   MQTT Connected: %s, broker uptime: %s" % (mqtt_up, broker_uptime))
+        print("   Memory free: %s, allocated: %s" % (gc.mem_free(), gc.mem_alloc()))
+        print("2 -------SENSOR------------- 2")
+        if (temp_average is not None) and (rh_average is not None):
+            print("   Temp: %sC, Rh: %s" % (temp_average, rh_average))
         if not BME280_sensor_faulty:
             if bmes.values[1][:-3] is not None:
-                print("Pressure: %s" % bmes.values[1][:-3])
+                print("   Pressure: %s" % bmes.values[1][:-3])
         if co2_average is not None:
-            print("CO2 is %s" % co2_average)
-        print("-----")
-        print("ADC value from MQ135 pin %s" % adcmq135.read())
-        print("-----")
+            print("   CO2 is %s" % co2_average)
+        print("3 --------ADC--------------- 3")
         if (temp_average is not None) and (rh_average is not None):
-            print("Corrected RZERO: %s" % co2s.get_corrected_rzero(temp_average, rh_average))
+            print("   ADC value from MQ135 pin %s, corrected RZERO: %s" %
+                  (adcmq135.read(), co2s.get_corrected_rzero(temp_average, rh_average)))
+        print("\n")
         await asyncio.sleep(5)
 
 # Adjust speed to low heat production, max 240000000, normal 160000000, min with Wi-Fi 80000000

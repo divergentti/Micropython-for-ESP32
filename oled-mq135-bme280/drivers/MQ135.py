@@ -4,13 +4,14 @@ from machine import ADC
 
 class MQ135_ao:
 
-    def __init__(self, ao_pin=35, loadresistor=20, resistorzero=76.63):
+    def __init__(self, ao_pin=35, loadresistor=20, resistorzero=76.63, attennuate=True):
         self.pin = ao_pin
         # The load resistance on the board. 20 = 20k
         self.RLOAD = loadresistor
         # Calibration resistance at atmospheric CO2 level
         # RZERO = 76.63
         self.RZERO = resistorzero
+        self.attennuate = attennuate
 
     """
     Source rubfi: https://raw.githubusercontent.com/rubfi/MQ135/master/mq135.py
@@ -60,7 +61,8 @@ class MQ135_ao:
     def get_resistance(self):
         """Returns the resistance of the sensor in kOhms // -1 if not value got in pin"""
         adc = ADC(self.pin)
-        adc.atten(3)  # attennaute 11 db
+        if self.attennuate:
+            adc.atten(3)  # attennaute 11 db
         value = adc.read()
         if value == 0:
             return -1
@@ -87,3 +89,6 @@ class MQ135_ao:
         """Returns the resistance RZero of the sensor (in kOhms) for calibration purposes
         corrected for temperature/humidity"""
         return self.get_corrected_resistance(temperature, humidity) * math.pow((self.ATMOCO2/self.PARA), (1./self.PARB))
+
+    def set_new_rzero(self, resistance):
+        self.RZERO = resistance

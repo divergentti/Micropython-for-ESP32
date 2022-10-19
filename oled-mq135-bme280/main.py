@@ -447,7 +447,6 @@ async def read_sensors_loop():
 
 async def mqtt_publish_loop():
     #  Publish only valid average values.
-    global temp_average, rh_average, co2_average
 
     while True:
         if mqtt_up is False:
@@ -456,16 +455,17 @@ async def mqtt_publish_loop():
             await asyncio.sleep(MQTT_INTERVAL)
             if temp_average is not None:
                 if -40 < temp_average < 100:
-                    await client.publish(TOPIC_TEMP, temp_average, retain=0, qos=0)
+                    await client.publish(TOPIC_TEMP, str(temp_average), retain=0, qos=0)
+                    # float to str conversion due to MQTT_AS.py len() issue
             if rh_average is not None:
                 if 0 < rh_average < 100:
-                    await client.publish(TOPIC_RH, rh_average, retain=0, qos=0)
+                    await client.publish(TOPIC_RH, str(rh_average), retain=0, qos=0)
             if not BME280_sensor_faulty:
                 if bmes.values[1][:-3] is not None:
                     await client.publish(TOPIC_PRESSURE, bmes.values[1][:-3], retain=0, qos=0)
             if co2_average is not None:
                 if 400 < co2_average < 8000:
-                    await client.publish(TOPIC_CO2, co2_average, retain=0, qos=0)
+                    await client.publish(TOPIC_CO2, str(co2_average), retain=0, qos=0)
 # For MQTT_AS
 config['server'] = MQTT_SERVER
 config['user'] = MQTT_USER

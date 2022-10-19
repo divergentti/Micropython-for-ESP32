@@ -5,7 +5,7 @@ If you use DMP280, you need to have Rh from other sensor, like DHT22.
 Values could be transferred by MQTT to the MQTT broker and from the broker to the Influxdb etc.
 
 The MQ135-sensor VCC is 5 volts. Values are read from the AO (Analog Out) pin.
-Analog Out (AO) is too high as default. ESP32 ADC (Analog to DC converter) read values between 0 to 1 volts.
+Analog Out (AO) is too high as default. ESP32 ADC (Analog to DC converter) read values 0 to 1 volts.
 Over 1 volt gives value 4095. You need a resistor splitter for readings.
 Use 47k resistor from MQ135 AO pin to 10K resistor, which other end is connected to GND.
 
@@ -18,12 +18,13 @@ MQ135 sensor data:
     - Rh 33 % -> 85 % delta Rs/Ro = 0.1
     - Scope NH3 = 10 - 300 ppm
     - Bentsen 10 - 1000 ppm
-    - Alkohol 10 - 300 ppm
+    - Alcohol 10 - 300 ppm
     - For proper calculation you need temperature and Rh value from other sensor, like BME280, DHT22 etc.
 
 If the MQ135 board has 102 (1k) load resistor in the middle on top (RL), it does not work for CO2!
-- solder out the 1k resistor and replace with 20k (20 000) resistor. If you use another ohms, change in runtimeconfig.
-- MQ135.py attennuates signal by 11db.
+- solder out the 1k resistor and replace with 20k (20 000) resistor
+- if you use another ohms, change in runtimeconfig.json (10 = 10kOhm, 20 = 20kOhm)
+- as default, MQ135.py attennuates signal by 11db.
 
 Preheating time is 24 hours! After the 24 hours preheat process, check what console says about corrected RZERO and
 use that value in runtimeconfig.json.
@@ -31,7 +32,7 @@ use that value in runtimeconfig.json.
 MQ135 is connected per parameters.py to Pin34 and in MQ135.py attennuated 11db
 DHT22 (AM2302) is connected to Pin23
 I2C for the OLED and BME280 (or BMP280) is connected to SDA = Pin21 and SCL = Pin22.
-Use command i2c.scan() to check which devices responds from the I2C channel.
+Use command i2c.scan() to check which devices respond from the I2C channel.
 
 Program read sensor values once per second, rounds them to 1 decimal with correction values, then calculates averages.
 Averages are sent to the MQTT broker.
@@ -40,7 +41,9 @@ Touch is enabled so that you can use any wire to activate the OLED display.
 
 Asyncronous code. Tested with micropython 1.19.1, DHT22 and BMP280
 
-Version 0.2 Jari Hiltunen
+For webrepl, remember to execute import webrepl_setup one time.
+
+Version 0.3 Jari Hiltunen - 19.10.2022
 
 """
 
@@ -50,13 +53,12 @@ import uasyncio as asyncio
 from utime import time, mktime, localtime, sleep
 import gc
 import network
-import drivers.MQ135 as CO2Sensor
-import drivers.WIFICONN_AS as WifiNet
+import drivers.MQ135 as CO2SENSOR
+import drivers.WIFICONN_AS as WIFINET
 import drivers.BME280_float as BmESensor
-import drivers.SH1106 as OLEDDisplay
+import drivers.SH1106 as OLEDDISPLAY
 gc.collect()
 from json import load
-import esp
 import esp32
 import dht
 from drivers.MQTT_AS import MQTTClient, config
@@ -121,18 +123,18 @@ try:
         PRESSURE_CORRECTION = data['PRESSURE_CORRECTION']
         MQ135_RESISTOR = data['MQ135_RESISTOR']
         MQ135_RZERO = data['MQ135_RZERO']
-
 except OSError:
     print("Runtime parameters missing. Can not continue!")
     sleep(30)
     raise
 
+
 def resolve_date():
     # For Finland
     (year, month, mdate, hour, minute, second, wday, yday) = localtime()
     weekdays = ['Ma', 'Ti', 'Ke', 'To', 'Pe', 'La', 'Su']
-    summer_march = mktime((year, 3, (14 - (int(5 * year / 4 + 1)) % 7), 1, 0, 0, 0, 0, 0))
-    winter_december = mktime((year, 10, (7 - (int(5 * year / 4 + 1)) % 7), 1, 0, 0, 0, 0, 0))
+    summer_march = mktime((year, 3, (14 - (int(5 * year / 4 + 1)) % 7), 1, 0, 0, 0, 0))
+    winter_december = mktime((year, 10, (7 - (int(5 * year / 4 + 1)) % 7), 1, 0, 0, 0, 0))
     if mktime(localtime()) < summer_march:
         dst = localtime(mktime(localtime()) + 7200)
     elif mktime(localtime()) < winter_december:
@@ -141,11 +143,11 @@ def resolve_date():
         dst = localtime(mktime(localtime()) + 10800)
     (year, month, mdate, hour, minute, second, wday, yday) = dst
     day = "%s.%s.%s" % (mdate, month, year)
-    time = "%s:%s:%s" % ("{:02d}".format(hour), "{:02d}".format(minute), "{:02d}".format(second))
-    return day, time, weekdays[wday]
+    hours = "%s:%s:%s" % ("{:02d}".format(hour), "{:02d}".format(minute), "{:02d}".format(second))
+    return day, hours, weekdays[wday]
 
 
-class displayme(object):
+class Displayme(object):
 
     def __init__(self, width=16, rows=6, lpixels=128, kpixels=64):
         self.rows = []
@@ -156,7 +158,8 @@ class displayme(object):
         self.disptext = rows
         self.pixels_width = lpixels
         self.pixels_height = kpixels
-        self.screen = OLEDDisplay.SH1106_I2C(self.pixels_width, self.pixels_height, i2c)
+        self.screen = OLEDDISPLAY.SH1106_I2C(self.pixels_width, self.pixels_height, i2c)
+        self.screentext = ""
         self.screen.poweron()
         self.screen.init_display()
         self.inverse = False
@@ -167,7 +170,7 @@ class displayme(object):
         self.disptexts.clear()
         self.rows.clear()
         self.screentext = [text[y-self.dispwidth:y] for y in range(self.dispwidth,
-                              len(text)+self.dispwidth, self.dispwidth)]
+                           len(text)+self.dispwidth, self.dispwidth)]
         for y in range(len(self.disptexts)):
             self.rows.append(self.disptexts[y])
         if len(self.rows) > self.disptext:
@@ -293,9 +296,9 @@ async def show_what_i_do():
         print("Memory alloc: %s" % gc.mem_alloc())
         print("-------")
         if BME280_sensor_faulty:
-            print("BME280 sensor faulty!")
+            print("BME280 sensor faulty or disconnected!")
         if DHT22_sensor_faulty:
-            print("DHT22 sensor faulty!")
+            print("DHT22 sensor faulty or disconnected!")
         if temp_average is not None:
             print("Temp: %s" % temp_average)
         if rh_average is not None:
@@ -312,12 +315,12 @@ async def show_what_i_do():
             print("Corrected RZERO: %s" % co2s.get_corrected_rzero(temp_average, rh_average))
         await asyncio.sleep(5)
 
-# Adjust speed to low heat production, max 240000000, normal 160000000, min with WiFi 80000000
+# Adjust speed to low heat production, max 240000000, normal 160000000, min with Wi-Fi 80000000
 #  freq(240000000)
 freq(80000000)
 
 # Network handshake
-net = WifiNet.ConnectWiFi(SSID1, PASSWORD1, SSID2, PASSWORD2, NTPSERVER, DHCP_NAME, START_WEBREPL, WEBREPL_PASSWORD)
+net = WIFINET.ConnectWiFi(SSID1, PASSWORD1, SSID2, PASSWORD2, NTPSERVER, DHCP_NAME, START_WEBREPL, WEBREPL_PASSWORD)
 
 # BME280 or BMP280 sensor
 i2c = SoftI2C(scl=Pin(I2C_SCL_PIN), sda=Pin(I2C_SDA_PIN))
@@ -344,14 +347,14 @@ if (DHTSensor.humidity() == 0.0) or (DHTSensor.temperature() == 0.0):
 
 # MQ135 init. The loadresistor is resistor between GND and MQ135 B1 pin. Resistorzero is after calibration.
 try:
-    co2s = CO2Sensor.MQ135_ao(ao_pin=Pin(MQ135_AO_PIN), loadresistor=MQ135_RESISTOR, resistorzero=MQ135_RZERO)
+    co2s = CO2SENSOR.MQ135_ao(ao_pin=Pin(MQ135_AO_PIN), loadresistor=MQ135_RESISTOR, resistorzero=MQ135_RZERO)
 except OSError as e:
     print("Error: %s - MQ135 sensor init error!" % e)
     MQ135_sensor_faulty = True
 
 #  OLED display
 try:
-    display = displayme()
+    display = Displayme()
 except OSError as e:
     print("Error: %s - OLED Display init error!" % e)
 
@@ -381,6 +384,7 @@ async def read_sensors_loop():
     ppm_list = []
     temp_list = []
     rh_list = []
+    rzero_list = []
     #  Read values from sensor once per second, add them to the array, delete oldest when size 60 (seconds)
     while True:
         try:
@@ -418,17 +422,24 @@ async def read_sensors_loop():
                 ppm_list.append(co2s.get_ppm()+CO2_CORRECTION)
         except ValueError:
             pass
+        #  Adjust RZERO of the MQ135 sensor based on 20 measurement average
+        if (not MQ135_sensor_faulty) and (temp_average is not None) and (rh_average is not None):
+            rzero_list.append(co2s.get_corrected_rzero(temp_average, rh_average))
+            if len(rzero_list) >= 20:
+                rzero_list.pop(0)
+            elif len(rzero_list) > 1:
+                 co2s.set_new_rzero(round(sum(rzero_list) / len(rzero_list), 2))
         if len(ppm_list) >= 60:
             ppm_list.pop(0)
         if len(temp_list) >= 60:
             temp_list.pop(0)
         if len(rh_list) >= 60:
             rh_list.pop(0)
-        if len(ppm_list) > 0:
+        if len(ppm_list) > 1:
             co2_average = round(sum(ppm_list) / len(ppm_list), 1)
-        if len(temp_list) > 0:
+        if len(temp_list) > 1:
             temp_average = round(sum(temp_list) / len(temp_list), 1)
-        if len(rh_list) > 0:
+        if len(rh_list) > 1:
             rh_average = round(sum(rh_list) / len(rh_list), 1)
         gc.collect()
         await asyncio.sleep(1)
@@ -436,6 +447,8 @@ async def read_sensors_loop():
 
 async def mqtt_publish_loop():
     #  Publish only valid average values.
+    global temp_average, rh_average, co2_average
+
     while True:
         if mqtt_up is False:
             await asyncio.sleep(10)
@@ -447,8 +460,9 @@ async def mqtt_publish_loop():
             if rh_average is not None:
                 if 0 < rh_average < 100:
                     await client.publish(TOPIC_RH, rh_average, retain=0, qos=0)
-            if bmes.values[1][:-3] is not None:
-                await client.publish(TOPIC_PRESSURE, bmes.values[1][:-3], retain=0, qos=0)
+            if not BME280_sensor_faulty:
+                if bmes.values[1][:-3] is not None:
+                    await client.publish(TOPIC_PRESSURE, bmes.values[1][:-3], retain=0, qos=0)
             if co2_average is not None:
                 if 400 < co2_average < 8000:
                     await client.publish(TOPIC_CO2, co2_average, retain=0, qos=0)
@@ -488,7 +502,8 @@ async def page_1():
 async def page_2():
     await display.text_to_row("STATUS", 0, 5)
     await display.draw_underline(0, 6)
-    # await display.text_to_row("Up s.: %s" % (utime.time() - aloitusaika), 1, 5)
+    if START_MQTT:
+        await display.text_to_row("MQTT up: %s" % mqtt_up, 1, 5)
     if net.net_ok:
         await display.text_to_row("rssi: %s" % network.WLAN(network.STA_IF).status('rssi'), 2, 5)
     await display.text_to_row("Memfree: %s" % gc.mem_free(), 3, 5)

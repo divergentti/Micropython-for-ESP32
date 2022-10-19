@@ -292,11 +292,16 @@ async def show_what_i_do():
     while True:
         print("\n1 ---------WIFI------------- 1")
         if START_NETWORK == 1:
-            print("   WiFi Connected %s, failed contacts: %s, signal strength: %s" % (net.net_ok, net.con_att_fail, net.strength))
+            print("   WiFi Connected %s, hotspot: %s, signal strength: %s" % (net.net_ok, net.use_ssid, net.strength))
+            print("   IP-address: %s, connection attempts failed %s" % (net.ip_a, net.con_att_fail))
         if START_MQTT == 1:
             print("   MQTT Connected: %s, broker uptime: %s" % (mqtt_up, broker_uptime))
         print("   Memory free: %s, allocated: %s" % (gc.mem_free(), gc.mem_alloc()))
-        print("2 -------SENSOR------------- 2")
+        print("   Heap info %s, hall sensor %s, raw-temp %sC" % (esp32.idf_heap_info(esp32.HEAP_DATA),
+                                                                esp32.hall_sensor(),
+                                                                "{:.1f}".format(((float(esp32.raw_temperature())-32.0)
+                                                                                 * 5/9))))
+        print("2 ---------SENSOR----------- 2")
         if (temp_average is not None) and (rh_average is not None):
             print("   Temp: %sC, Rh: %s" % (temp_average, rh_average))
         if not BME280_sensor_faulty:
@@ -304,7 +309,7 @@ async def show_what_i_do():
                 print("   Pressure: %s" % bmes.values[1][:-3])
         if co2_average is not None:
             print("   CO2 is %s" % co2_average)
-        print("3 --------ADC--------------- 3")
+        print("3 ----------ADC------------- 3")
         if (temp_average is not None) and (rh_average is not None):
             print("   ADC value from MQ135 pin %s, corrected RZERO: %s" %
                   (adcmq135.read(), co2s.get_corrected_rzero(temp_average, rh_average)))

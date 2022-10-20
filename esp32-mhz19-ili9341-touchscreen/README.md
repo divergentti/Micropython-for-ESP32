@@ -1,3 +1,15 @@
+Update 20.10.2022:
+- added average calculation form temp, rh and pressure (list of 20 values, pop last value out from the list when size 20)
+- shortened variable names due to memory limits (ILI display init typically fails due to memory shortage)
+- gc.collect() and gc.threshold(gc.mem_free() // 4 + gc.mem_alloc()) repeated in the code
+- added error solutions and now raise errors if display is broken etc
+- fixed error with corrective values read from runtimeconfig.json, now corrective value is added to the values read from the sensors
+- fixed tuple error in the date calculation
+- removed unused colour codes from the Display class due to memory issues
+- improved debug screen at REPL
+- lowered MCU speed to 80 MHz, less heating
+
+
 Update 11.10.2022:
 - Added LCD backlight control. Use two transistors, PNP and NPN as a driver. Select proper GPIO (in the parameters.py now 27).
 - Added MQTT SSL and BACKLIGHT_TIMEOUT parameters to the runtimeconfig.json

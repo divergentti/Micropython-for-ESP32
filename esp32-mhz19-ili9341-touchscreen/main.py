@@ -1,26 +1,11 @@
 """"
-This script is used for airquality measurement.
+This script is used for air quality measurement.
 
 Display is ILI9341 2.8" TFT touch screen in the SPI bus,
-CO2 device is MH-Z19 NDIR-sensor, particle sensor is PMS7003 and temperature/rh/pressure sensor BME280.
+CO2 device is MH-Z19 NDIR-sensor, particle sensor is PMS7003 and temperature/rh/pressure sensor is BME280.
+Backlight control is done with 2 transistors, PNP and NPN (small TO-92 are ok).
 
-Removed comments and refactored variablenames to short version to save memory!
-
-This version is ported for micropython version 1.91.1 which deprecated I2C to SoftI2C.
-Added error checking for sensors and display init. Sensor or display error do not stop the code.
-
-Re-organized display class, moved display drawing procedures into main level. Referral using object name (disp).
-Added some checkups if user press the screen too early etc.
-
-Backlight control is done with 2 transistors, PNP and NPN (small TO-92 are ok). As an example:
-- BC327 (PNP) emitter to 5V (or 3.3V) and 100k resistor to base and collector to TFT led VCC pin.
-- 10 k resistor to BC337 (NPN) transistor emitter
-- From PIN (27) 100 k resistor to BC337 base, and 1M resistor to GND (to BC337 emitter)
-- BC337 (NPN) emitter to GND
-When Pin(27) is off, then backlight is lid, because current flows to the LCD backlight
-Check that GPIO (Pin) you select is also output pin!
-
-Updated: 11.10.2022: Jari Hiltunen
+Updated: 20.10.2022: Jari Hiltunen
 """
 from machine import SPI, SoftI2C, Pin, freq, reset, reset_cause
 import uasyncio as asyncio
@@ -36,19 +21,22 @@ import drivers.PMS7003_AS as PARTICLES
 import drivers.MHZ19B_AS as CO2
 import drivers.BME280_float as BmE
 gc.collect()
+gc.threshold(gc.mem_free() // 4 + gc.mem_alloc())
 from json import load
 import esp
 import esp32
 from drivers.MQTT_AS import MQTTClient, config
-gc.collect()
 
-# Globals
 mqtt_up = False
-broker_uptime = 0
-BME280_sensor_faulty = False
-PMS7003_sensor_faulty = False
-MHZ19_sensor_faulty = False
-screen_faulty = False
+b_upt = 0
+BME280_f = False
+temp_avg = None
+rh_avg = None
+press_avg = None
+PMS7003_f = False
+MHZ19_f = False
+scr_f = False
+
 
 try:
     f = open('parameters.py', "r")
@@ -57,76 +45,72 @@ try:
         TFT_RST_PIN, TFT_MISO_PIN, TFT_MOSI_PIN, TFT_SPI, TS_SPI, \
         P_SEN_UART, P_SEN_TX, P_SEN_RX, I2C_SCL_PIN, I2C_SDA_PIN, BACKLIGHT_PIN
     f.close()
-except OSError:  # open failed
-    print("parameter.py-file missing! Can not continue!")
-    raise
-
+except OSError as e:  # open failed
+    raise ValueError("Error: %s - parameter.py-file missing! Can not continue!" % e)
 
 try:
     f = open('runtimeconfig.json', 'r')
     with open('runtimeconfig.json') as config_file:
         data = load(config_file)
         f.close()
-        SSID1 = data['SSID1']
-        SSID2 = data['SSID2']
-        PASSWORD1 = data['PASSWORD1']
-        PASSWORD2 = data['PASSWORD2']
-        MQTT_SERVER = data['MQTT_SERVER']
-        MQTT_PASSWORD = data['MQTT_PASSWORD']
-        MQTT_USER = data['MQTT_USER']
-        MQTT_PORT = data['MQTT_PORT']
-        MQTT_USE_SSL = data['MQTT_SSL']
-        MQTT_INTERVAL = data['MQTT_INTERVAL']
-        CLIENT_ID = data['CLIENT_ID']
-        TOPIC_ERRORS = data['TOPIC_ERRORS']
-        WEBREPL_PASSWORD = data['WEBREPL_PASSWORD']
-        NTPSERVER = data['NTPSERVER']
-        DHCP_NAME = data['DHCP_NAME']
-        START_WEBREPL = data['START_WEBREPL']
-        START_NETWORK = data['START_NETWORK']
-        START_MQTT = data['START_MQTT']
-        SCREEN_UPDATE_INTERVAL = data['SCREEN_UPDATE_INTERVAL']
-        DEBUG_SCREEN_ACTIVE = data['DEBUG_SCREEN_ACTIVE']
-        SCREEN_TIMEOUT = data['SCREEN_TIMEOUT']
-        BACKLIGHT_TIMEOUT = data['BACKLIGHT_TIMEOUT']
-        TOPIC_TEMP = data['TOPIC_TEMP']
-        TOPIC_RH = data['TOPIC_RH']
-        TOPIC_PRESSURE = data['TOPIC_PRESSURE']
-        TOPIC_AIRQUALITY = data['TOPIC_AIRQUALITY']
-        TOPIC_CO2 = data['TOPIC_CO2']
-        TOPIC_PM1_0 = data['TOPIC_PM1_0']
-        TOPIC_PM1_0_ATM = data['TOPIC_PM1_0_ATM']
-        TOPIC_PM2_5 = data['TOPIC_PM2_5']
-        TOPIC_PM2_5_ATM = data['TOPIC_PM2_5_ATM']
-        TOPIC_PM10_0 = data['TOPIC_PM10_0']
-        TOPIC_PM10_0_ATM = data['TOPIC_PM10_0_ATM']
-        TOPIC_PCNT_0_3 = data['TOPIC_PCNT_0_3']
-        TOPIC_PCNT_0_5 = data['TOPIC_PCNT_0_5']
-        TOPIC_PCNT_1_0 = data['TOPIC_PCNT_1_0']
-        TOPIC_PCNT_2_5 = data['TOPIC_PCNT_2_5']
-        TOPIC_PCNT_5_0 = data['TOPIC_PCNT_5_0']
-        TOPIC_PCNT_10_0 = data['TOPIC_PCNT_10_0']
-        CO2_ALM_THOLD = data['CO2_ALARM_TRESHOLD']
-        AQ_THOLD = data['AIRQUALIY_TRESHOLD']
-        TEMP_THOLD = data['TEMP_TRESHOLD']
-        TEMP_CORRECTION = data['TEMP_CORRECTION']
-        RH_THOLD = data['RH_TRESHOLD']
-        RH_CORRECTION = data['RH_CORRECTION']
-        P_THOLD = data['PRESSURE_TRESHOLD']
-        PRESSURE_CORRECTION = data['PRESSURE_CORRECTION']
+        S1 = data['S1']
+        S2 = data['S2']
+        P1 = data['P1']
+        P2 = data['P2']
+        MQSRV = data['MQSRV']
+        MQPW = data['MQPW']
+        MQUSR = data['MQUSR']
+        MQP = data['MQP']
+        MQSL = data['MQSL']
+        MQIVAL = data['MQIVAL']
+        CLID = data['CLID']
+        T_ERR = data['T_ERR']
+        WBRPLPW = data['WBRPLPW']
+        NTPS = data['NTPS']
+        DHCPN = data['DHCPN']
+        SWEBR = data['SWEBR']
+        SNET = data['SNET']
+        SMQTT = data['SMQTT']
+        S_UPDE_IVAL = data['S_UPDE_IVAL']
+        DEBUG = data['DEBUG']
+        S_TOUT = data['S_TOUT']
+        BLIGHT_TOUT = data['BLIGHT_TOUT']
+        T_TEMP = data['T_TEMP']
+        T_RH = data['T_RH']
+        T_PRESS = data['T_PRESS']
+        T_AIRQ = data['T_AIRQ']
+        T_CO2 = data['T_CO2']
+        T_PM1_0 = data['T_PM1_0']
+        T_PM1_0_ATM = data['T_PM1_0_ATM']
+        T_PM2_5 = data['T_PM2_5']
+        T_PM2_5_ATM = data['T_PM2_5_ATM']
+        T_PM10_0 = data['T_PM10_0']
+        T_PM10_0_ATM = data['T_PM10_0_ATM']
+        T_PCNT_0_3 = data['T_PCNT_0_3']
+        T_PCNT_0_5 = data['T_PCNT_0_5']
+        T_PCNT_1_0 = data['T_PCNT_1_0']
+        T_PCNT_2_5 = data['T_PCNT_2_5']
+        T_PCNT_5_0 = data['T_PCNT_5_0']
+        T_PCNT_10_0 = data['T_PCNT_10_0']
+        CO2_THOLD = data['CO2_THOLD']
+        AQ_THOLD = data['AQ_THOLD']
+        TEMP_THOLD = data['TEMP_THOLD']
+        TEMP_COR = data['TEMP_COR']
+        RH_THOLD = data['RH_THOLD']
+        RH_COR = data['RH_COR']
+        PRESS_THOLD = data['PRESS_THOLD']
+        PRESS_COR = data['PRESS_COR']
 
-except OSError:
-    print("Runtime parameters missing. Can not continue!")
-    sleep(30)
-    raise
+except OSError as e:
+    raise ValueError("Error %s: Runtime parameters missing. Can not continue!" % e)
 
 
 def resolve_date():
     # For Finland
     (year, month, mdate, hour, minute, second, wday, yday) = localtime()
     weekdays = ['Ma', 'Ti', 'Ke', 'To', 'Pe', 'La', 'Su']
-    summer_march = mktime((year, 3, (14 - (int(5 * year / 4 + 1)) % 7), 1, 0, 0, 0, 0, 0))
-    winter_december = mktime((year, 10, (7 - (int(5 * year / 4 + 1)) % 7), 1, 0, 0, 0, 0, 0))
+    summer_march = mktime((year, 3, (14 - (int(5 * year / 4 + 1)) % 7), 1, 0, 0, 0, 0))
+    winter_december = mktime((year, 10, (7 - (int(5 * year / 4 + 1)) % 7), 1, 0, 0, 0, 0))
     if mktime(localtime()) < summer_march:
         dst = localtime(mktime(localtime()) + 7200)
     elif mktime(localtime()) < winter_december:
@@ -147,17 +131,8 @@ class TFTDisplay(object):
         self.unispace = XglcdFont('fonts/Unispace12x24.c', 12, 24)
         self.a_font = self.unispace
         self.cols = {'red': color565(255, 0, 0), 'green': color565(0, 255, 0), 'blue': color565(0, 0, 255),
-                     'yellow': color565(255, 255, 0), 'fuschia': color565(255, 0, 255),
-                     'aqua': color565(0, 255, 255), 'maroon': color565(128, 0, 0),
-                     'darkgreen': color565(0, 128, 0), 'navy': color565(0, 0, 128),
-                     'teal': color565(0, 128, 128), 'purple': color565(128, 0, 128),
-                     'olive': color565(128, 128, 0), 'orange': color565(255, 128, 0),
-                     'deep_pink': color565(255, 0, 128), 'charteuse': color565(128, 255, 0),
-                     'spring_green': color565(0, 255, 128), 'indigo': color565(128, 0, 255),
-                     'dodger_blue': color565(0, 128, 255), 'cyan': color565(128, 255, 255),
-                     'pink': color565(255, 128, 255), 'light_yellow': color565(255, 255, 128),
-                     'light_coral': color565(255, 128, 128), 'light_green': color565(128, 255, 128),
-                     'white': color565(255, 255, 255), 'black': color565(0, 0, 0)}
+                     'yellow': color565(255, 255, 0), 'light_green': color565(128, 255, 128),
+                     'white': color565(255, 255, 255), 'navy': color565(0, 0, 128), 'black': color565(0, 0, 0)}
         self.c_fnts = 'white'
         self.col_bckg = 'light_green'
         self.xpt = Touch(spi=touchspi, cs=Pin(TS_CS_PIN), int_pin=Pin(TS_IRQ_PIN),
@@ -173,9 +148,9 @@ class TFTDisplay(object):
         self.f_w = 10
         self.max_r = self.d.height / self.f_h
         self.indent_p = 12
-        self.scr_tout = SCREEN_TIMEOUT
+        self.scr_tout = S_TOUT
         self.d_all_ok = True
-        self.scr_upd_ival = SCREEN_UPDATE_INTERVAL
+        self.scr_upd_ival = S_UPDE_IVAL
         self.d_scr_active = False
         self.rw_col = None
         self.rows = None
@@ -183,8 +158,6 @@ class TFTDisplay(object):
         self.backlight_status = True
 
     def first_touch(self, x, y):
-        if DEBUG_SCREEN_ACTIVE == 1:
-            print("Touched!")
         self.t_tched = True
 
     def backlight_on(self):
@@ -212,6 +185,10 @@ class AirQuality(object):
 
 
 async def upd_status_loop():
+    global temp_avg, rh_avg, press_avg
+    pres_list = []
+    temp_list = []
+    rh_list = []
     while True:
         # For network
         if net.net_ok is True:
@@ -221,24 +198,37 @@ async def upd_status_loop():
 
         # For sensors thresholds, background change
         disp.d_all_ok = True
-        if not MHZ19_sensor_faulty:
+        if not MHZ19_f:
             if co2s.co2_average is not None:
-                if co2s.co2_average > CO2_ALM_THOLD:
+                if co2s.co2_average > CO2_THOLD:
                     disp.d_all_ok = False
         if aq.aqinndex is not None:
             if aq.aqinndex > AQ_THOLD:
                 disp.d_all_ok = False
-        if not BME280_sensor_faulty:
+        if not BME280_f:
             if bmes.values[0] is not None:
-                if float(bmes.values[0][:-1]) > TEMP_THOLD:
-                    disp.d_all_ok = False
+                temp_list.append(round(float(bmes.values[0][:-1]), 1) + TEMP_COR)
             if bmes.values[2] is not None:
-                if float(bmes.values[2][:-1]) > RH_THOLD:
-                    disp.d_all_ok = False
+                rh_list.append(round(float(bmes.values[2][:-1]), 1) + RH_COR)
             if bmes.values[1] is not None:
-                if float(bmes.values[1][:-3]) > P_THOLD:
+                pres_list.append(round(float(bmes.values[1][:-3]), 1) + PRESS_COR)
+            if len(temp_list) >= 20:
+                temp_list.pop(0)
+            if len(rh_list) >= 20:
+                rh_list.pop(0)
+            if len(pres_list) >= 20:
+                pres_list.pop(0)
+            if len(temp_list) > 1:
+                temp_avg = round(sum(temp_list) / len(temp_list), 1)
+            if len(rh_list) > 1:
+                rh_avg = round(sum(rh_list) / len(rh_list), 1)
+            if len(pres_list) > 1:
+                press_avg = round(sum(pres_list) / len(pres_list), 1)
+            if (temp_avg is not None) and (rh_avg is not None) and (press_avg is not None):
+                if (temp_avg > TEMP_THOLD) or (rh_avg > RH_THOLD) or (press_avg > PRESS_THOLD):
                     disp.d_all_ok = False
         gc.collect()
+        gc.threshold(gc.mem_free() // 4 + gc.mem_alloc())
         await asyncio.sleep(disp.scr_upd_ival - 2)
 
 
@@ -246,42 +236,50 @@ async def show_what_i_do():
     # Output is REPL
 
     while True:
-        if START_NETWORK == 1:
-            print("WiFi Connected %s" % net.net_ok)
-            print("WiFi failed connects %s" % net.con_att_fail)
-            print("Signal strength %s" % net.strength)
-        if START_MQTT == 1:
-            print("MQTT Connected %s" % mqtt_up)
-            print("MQTT broker uptime %s" % broker_uptime)
-        print("Memory free: %s" % gc.mem_free())
-        print("Memory alloc: %s" % gc.mem_alloc())
-        print("Toucscreen pressed: %s" % disp.t_tched)
-        print("Details screen active: %s" % disp.d_scr_active)
-        print("-------")
-        if BME280_sensor_faulty:
+        print("\n1 ---------WIFI------------- 1")
+        if SNET == 1:
+            print("   WiFi Connected %s, hotspot: %s, signal strength: %s" % (net.net_ok, net.use_ssid, net.strength))
+            print("   IP-address: %s, connection attempts failed %s" % (net.ip_a, net.con_att_fail))
+        if SMQTT == 1:
+            print("   MQTT Connected: %s, broker uptime: %s" % (mqtt_up, b_upt))
+        print("   Memory free: %s, allocated: %s" % (gc.mem_free(), gc.mem_alloc()))
+        print("   Heap info %s, hall sensor %s, raw-temp %sC" % (esp32.idf_heap_info(esp32.HEAP_DATA),
+                                                                 esp32.hall_sensor(),
+                                                                 "{:.1f}".format(
+                                                                     ((float(esp32.raw_temperature()) - 32.0)
+                                                                      * 5 / 9))))
+        print("2 -------SENSORDATA--------- 2")
+        if (temp_avg is not None) and (rh_avg is not None) and (press_avg is not None):
+            print("   Temp: %sC, Rh: %s, Pressure: %s" % (temp_avg, rh_avg, press_avg))
+        if co2s.co2_average is not None:
+            print("   CO2 is %s" % co2s.co2_average)
+        print("3 ---------FAULTS------------- 3")
+        if BME280_f:
             print("BME280 sensor faulty!")
-        if MHZ19_sensor_faulty:
+        if MHZ19_f:
             print("MHZ19 sensor faulty!")
-        if PMS7003_sensor_faulty:
+        if PMS7003_f:
             print("PMS7003 sensor faulty!")
-        if screen_faulty:
+        if scr_f:
             print("Screen faulty!")
         await asyncio.sleep(5)
 
-# Kick in some speed, max 240000000, normal 160000000, min with WiFi 80000000
-freq(240000000)
+
+# Slow down speed due to heat production, max 240000000, normal 160000000, min with Wi-Fi 80000000
+# freq(240000000)
+freq(80000000)
 
 # Network handshake
-net = WifiNet.ConnectWiFi(SSID1, PASSWORD1, SSID2, PASSWORD2, NTPSERVER, DHCP_NAME, START_WEBREPL, WEBREPL_PASSWORD)
+net = WifiNet.ConnectWiFi(S1, P1, S2, P2, NTPS, DHCPN, SWEBR, WBRPLPW)
 
 # Particle sensor
 try:
     pms = PARTICLES.PSensorPMS7003(uart=P_SEN_UART, rxpin=P_SEN_RX, txpin=P_SEN_TX)
 except OSError as e:
     print("Error: %s - Particle sensor init error!" % e)
-    PMS7003_sensor_faulty = True
+    PMS7003_f = True
 # Air Quality calculations
-if not PMS7003_sensor_faulty:
+if not PMS7003_f:
     aq = AirQuality(pms)
 
 # CO2 sensor
@@ -289,7 +287,7 @@ try:
     co2s = CO2.MHZ19bCO2(uart=CO2_SEN_UART, rxpin=CO2_SEN_RX_PIN, txpin=CO2_SEN_TX_PIN)
 except OSError as e:
     print("Error: %s - MHZ19 sensor init error!" % e)
-    MHZ19_sensor_faulty = True
+    MHZ19_f = True
 
 # BME280 sensor
 i2c = SoftI2C(scl=Pin(I2C_SCL_PIN), sda=Pin(I2C_SDA_PIN))
@@ -297,13 +295,12 @@ try:
     bmes = BmE.BME280(i2c=i2c)
 except OSError as e:
     print("Error: %s - BME sensor init error!" % e)
-    BME280_sensor_faulty = True
+    BME280_f = True
 
 #  If you use UART2, you have to delete co2 object and re-create it after power on boot!
-#  This may be fixed in new versions
 if reset_cause() == 1:
     del co2s
-    sleep(5)   # 2 is not enough!
+    sleep(5)  # 2 is not enough!
     co2s = CO2.MHZ19bCO2(uart=CO2_SEN_UART, rxpin=CO2_SEN_RX_PIN, txpin=CO2_SEN_TX_PIN)
 #  Touchscreen and display init
 t_spi = SPI(TS_SPI)  # HSPI
@@ -313,17 +310,19 @@ d_spi.init(baudrate=50000000, sck=Pin(TFT_CLK_PIN), mosi=Pin(TFT_MOSI_PIN), miso
 try:
     disp = TFTDisplay(t_spi, d_spi)
     disp.scr_actv_time = time()
+except MemoryError:
+    sleep(10)
+    reset()
 except OSError as e:
-    print("Error: %s - Touchscreen or display init error!" % e)
-    screen_faulty = True
+    raise TypeError("Error: %s - Touchscreen or display init error!" % e)
 
 
 async def mqtt_up_loop():
-    global mqtt_up
-    global client
+    global mqtt_up, client
 
     while net.net_ok is False:
         gc.collect()
+        gc.threshold(gc.mem_free() // 4 + gc.mem_alloc())
         await asyncio.sleep(5)
 
     if net.net_ok is True:
@@ -333,7 +332,11 @@ async def mqtt_up_loop():
         config['wifi_pw'] = net.u_pwd
         MQTTClient.DEBUG = True
         client = MQTTClient(config)
-        await client.connect()
+        try:
+            await client.connect()
+        except OSError:
+            await asyncio.sleep(5)
+            reset()
         while mqtt_up is False:
             await asyncio.sleep(5)
             try:
@@ -341,62 +344,60 @@ async def mqtt_up_loop():
                 if client.isconnected() is True:
                     mqtt_up = True
             except OSError as e:
-                if DEBUG_SCREEN_ACTIVE == 1:
+                if DEBUG == 1:
                     print("MQTT error: %s" % e)
                     print("Config: %s" % config)
     n = 0
     while True:
-        # await self.mqtt_subscribe()
         await asyncio.sleep(5)
-        if DEBUG_SCREEN_ACTIVE == 1:
+        if DEBUG == 1:
             print('mqtt-publish', n)
         await client.publish('result', '{}'.format(n), qos=1)
         n += 1
 
 
 async def mqtt_subscribe(client):
-    # If "client" is missing, you get error from line 538 in MQTT_AS.py (1 given, expected 0)
     await client.subscribe('$SYS/broker/uptime', 1)
 
 
 def update_mqtt_status(topic, msg, retained):
-    global broker_uptime
-    if DEBUG_SCREEN_ACTIVE == 1:
+    global b_upt
+    if DEBUG == 1:
         print((topic, msg, retained))
-    broker_uptime = msg
+    b_upt = msg
 
 
 async def details_screen_loop():
     disp.scr_actv_time = time()
-    if not screen_faulty and not PMS7003_sensor_faulty:
+    if not scr_f and not PMS7003_f:
         r, r_c = await particle_screen()
         disp.d_scr_active = True
         try:
             await show_screen(r, r_c)
         except TypeError:
             pass
-        await asyncio.sleep(SCREEN_UPDATE_INTERVAL)
-    if not screen_faulty and not BME280_sensor_faulty:
+        await asyncio.sleep(S_UPDE_IVAL)
+    if not scr_f and not BME280_f:
         r, r_c = await sensor_monitor()
         try:
             await show_screen(r, r_c)
         except TypeError:
             pass
-        await asyncio.sleep(SCREEN_UPDATE_INTERVAL)
-    if not screen_faulty:
+        await asyncio.sleep(S_UPDE_IVAL)
+    if not scr_f:
         r, r_c = await sys_monitor()
         try:
             await show_screen(r, r_c)
         except TypeError:
             pass
-        await asyncio.sleep(SCREEN_UPDATE_INTERVAL)
-    if not screen_faulty:
+        await asyncio.sleep(S_UPDE_IVAL)
+    if not scr_f:
         r, r_c = await net_monitor()
         try:
             await show_screen(r, r_c)
         except TypeError:
             pass
-        await asyncio.sleep(SCREEN_UPDATE_INTERVAL)
+        await asyncio.sleep(S_UPDE_IVAL)
     disp.d_scr_active = False
     disp.t_tched = False
 
@@ -405,39 +406,38 @@ async def rot_scr():
     disp.scr_actv_time = time()
     disp.d_scr_active = True
     r, r_c = await particle_screen()
-    if not r is None:
+    if r is not None:
         try:
             await show_screen(r, r_c)
         except TypeError:
             pass
-    await asyncio.sleep(SCREEN_UPDATE_INTERVAL)
+    await asyncio.sleep(S_UPDE_IVAL)
     r, r_c = await sensor_monitor()
-    if not r is None:
+    if r is not None:
         try:
             await show_screen(r, r_c)
         except TypeError:
             pass
-    await asyncio.sleep(SCREEN_UPDATE_INTERVAL)
+    await asyncio.sleep(S_UPDE_IVAL)
     r, r_c = await sys_monitor()
-    if not r is None:
+    if r is not None:
         try:
             await show_screen(r, r_c)
         except TypeError:
             pass
-    await asyncio.sleep(SCREEN_UPDATE_INTERVAL)
+    await asyncio.sleep(S_UPDE_IVAL)
     r, r_c = await net_monitor()
-    if not r is None:
+    if r is not None:
         try:
             await show_screen(r, r_c)
         except TypeError:
             pass
-    await asyncio.sleep(SCREEN_UPDATE_INTERVAL)
+    await asyncio.sleep(S_UPDE_IVAL)
     disp.d_scr_active = False
     disp.t_tched = False
 
 
 async def update_screen_loop():
-    n = 0
     while True:
         if disp.t_tched is True:
             disp.backlight_on()
@@ -448,8 +448,8 @@ async def update_screen_loop():
                     await error_bckg()
                     disp.d.draw_text(disp.indent_p, 25 + disp.r_h * 2, "Please, wait!", disp.a_font, disp.cols["white"],
                                      disp.cols[disp.col_bckg])
-                    disp.d.draw_text(disp.indent_p, 25 + disp.r_h * 3, "Sensors not ready!", disp.a_font, disp.cols["white"],
-                                     disp.cols[disp.col_bckg])
+                    disp.d.draw_text(disp.indent_p, 25 + disp.r_h * 3, "Sensors not ready!",
+                                     disp.a_font, disp.cols["white"], disp.cols[disp.col_bckg])
                     disp.d.draw_text(disp.indent_p, 25 + disp.r_h * 4, "Thank you!", disp.a_font, disp.cols["white"],
                                      disp.cols[disp.col_bckg])
                     pass
@@ -458,7 +458,7 @@ async def update_screen_loop():
                 disp.d_scr_active = False
                 disp.t_tched = False
         else:
-            if time() - disp.scr_actv_time <= BACKLIGHT_TIMEOUT:
+            if time() - disp.scr_actv_time <= BLIGHT_TOUT:
                 disp.backlight_on()
             else:
                 disp.backlight_off()
@@ -474,19 +474,19 @@ async def wait_timer():
 
 
 async def show_screen(rows, row_colours):
-    r1 = "Airquality v1.0"
+    r1 = "AQ v1.0"
     r1_c = 'red'
-    r2 = "Starting"
+    r2 = "1"
     r2_c = 'white'
-    r3 = "Wait"
+    r3 = "2"
     r3_c = 'red'
-    r4 = "for"
+    r4 = "3"
     r4_c = 'red'
-    r5 = "init"
+    r5 = "4"
     r5_c = 'red'
-    r6 = "and"
+    r6 = "5"
     r6_c = 'red'
-    r7 = "values."
+    r7 = "6"
     r7_c = 'red'
     disp.f_h = disp.a_font.height
     disp.r_h = disp.f_h + 2  # 2 pixel space between rows
@@ -543,7 +543,7 @@ async def upd_welcome():
         r2_c = 'yellow'
     else:
         r2 = "CO2: %s ppm (%s)" % ("{:.1f}".format(co2s.co2_value), "{:.1f}".format(co2s.co2_average))
-        if (co2s.co2_average > CO2_ALM_THOLD) or (co2s.co2_value > CO2_ALM_THOLD):
+        if (co2s.co2_average > CO2_THOLD) or (co2s.co2_value > CO2_THOLD):
             r2_c = 'red'
         else:
             r2_c = 'blue'
@@ -556,30 +556,30 @@ async def upd_welcome():
             r3_c = 'red'
         else:
             r3_c = 'blue'
-    if bmes.values[0] is None:
+    if temp_avg is None:
         r4 = "Waiting values..."
         r4_c = 'yellow'
     else:
-        r4 = "Lampo: %s (DP: %sC)" % (bmes.values[0], "{:.1f}".format(bmes.dew_point))
-        if float(bmes.values[0][:-1]) > TEMP_THOLD:
+        r4 = "Lampo: %s (DP: %sC)" % (temp_avg, "{:.1f}".format(bmes.dew_point))
+        if temp_avg > TEMP_THOLD:
             r4_c = 'red'
         else:
             r4_c = 'blue'
-    if bmes.values[2] is None:
+    if rh_avg is None:
         r5 = "Waiting values..."
         r5_c = 'yellow'
     else:
-        r5 = "Kosteus: %s (%sM)" % (bmes.values[2], "{:.1f}".format(bmes.altitude))
-        if float(bmes.values[2][:-1]) > RH_THOLD:
+        r5 = "Kosteus: %s (%sM)" % (rh_avg, "{:.1f}".format(bmes.altitude))
+        if rh_avg > RH_THOLD:
             r5_c = 'red'
         else:
             r5_c = 'blue'
-    if bmes.values[1] is None:
+    if press_avg is None:
         r6 = "Waiting values..."
         r6_c = 'yellow'
     else:
-        r6 = "Paine: %s ATM" % bmes.values[1]
-        if float(bmes.values[1][:-3]) > P_THOLD:
+        r6 = "Paine: %s ATM" % press_avg
+        if press_avg > PRESS_THOLD:
             r6_c = 'red'
         else:
             r6_c = 'blue'
@@ -598,9 +598,9 @@ async def particle_screen():
         r1 = "1. Konsentraatio ug/m3:"
         r1_c = 'blue'
         if (pms.pms_dictionary['PM1_0'] is not None) and (pms.pms_dictionary['PM1_0_ATM'] is not None) and \
-                    (pms.pms_dictionary['PM2_5'] is not None) and (pms.pms_dictionary['PM2_5_ATM'] is not None):
+                (pms.pms_dictionary['PM2_5'] is not None) and (pms.pms_dictionary['PM2_5_ATM'] is not None):
             r2 = " PM1:%s (%s) PM2.5:%s (%s)" % (pms.pms_dictionary['PM1_0'], pms.pms_dictionary['PM1_0_ATM'],
-                                                pms.pms_dictionary['PM2_5'], pms.pms_dictionary['PM2_5_ATM'])
+                                                 pms.pms_dictionary['PM2_5'], pms.pms_dictionary['PM2_5_ATM'])
             r2_c = 'black'
         else:
             r2 = " Waiting"
@@ -639,7 +639,7 @@ async def particle_screen():
 
 
 async def sensor_monitor():
-    if not BME280_sensor_faulty and not PMS7003_sensor_faulty and not MHZ19_sensor_faulty:
+    if not BME280_f and not PMS7003_f and not MHZ19_f:
         row1 = "3. Sensoridata"
         row1_colour = 'black'
         row2 = "MHZ19B CRC errors: %s " % co2s.crc_errors
@@ -672,7 +672,7 @@ async def sys_monitor():
     row4_colour = 'blue'
     row5 = "Flash size: %s " % esp.flash_size()
     row5_colour = 'blue'
-    row6 = "MCU Temp: %sC" % ("{:.1f}".format(((float(esp32.raw_temperature())-32.0) * 5/9)))
+    row6 = "MCU Temp: %sC" % ("{:.1f}".format(((float(esp32.raw_temperature()) - 32.0) * 5 / 9)))
     row6_colour = 'blue'
     row7 = "Hall sensor %s" % esp32.hall_sensor()
     row7_colour = 'blue'
@@ -682,7 +682,7 @@ async def sys_monitor():
 
 
 async def net_monitor():
-    if START_NETWORK == 1:
+    if SNET == 1:
         row1 = "5. Network monitor"
         row1_colour = 'black'
         row2 = "WiFi IP: %s" % net.ip_a
@@ -695,8 +695,8 @@ async def net_monitor():
         row5_colour = 'blue'
         row6 = "MQTT Up: %s" % mqtt_up
         row6_colour = 'blue'
-        if broker_uptime is not 0:
-            row7 = "Broker up %s" % broker_uptime[:-8]
+        if b_upt is not 0:
+            row7 = "Broker up %s" % b_upt[:-8]
         else:
             row7 = "Broker not connected"
         row7_colour = 'blue'
@@ -710,55 +710,58 @@ async def net_monitor():
 async def mqtt_publish_loop():
     while True:
         if mqtt_up is False:
+            gc.collect()
+            gc.threshold(gc.mem_free() // 4 + gc.mem_alloc())
             await asyncio.sleep(10)
         else:
-            await asyncio.sleep(MQTT_INTERVAL)
-            if not PMS7003_sensor_faulty:
+            await asyncio.sleep(MQIVAL)
+            if not PMS7003_f:
                 if (pms.pms_dictionary is not None) and ((time() - pms.startup_time) > pms.read_interval):
                     if pms.pms_dictionary['PM1_0'] is not None:
-                        await client.publish(TOPIC_PM1_0, str(pms.pms_dictionary['PM1_0']), retain=0, qos=0)
+                        await client.publish(T_PM1_0, str(pms.pms_dictionary['PM1_0']), retain=0, qos=0)
                     if pms.pms_dictionary['PM1_0_ATM'] is not None:
-                        await client.publish(TOPIC_PM1_0_ATM, str(pms.pms_dictionary['PM1_0_ATM']), retain=0, qos=0)
+                        await client.publish(T_PM1_0_ATM, str(pms.pms_dictionary['PM1_0_ATM']), retain=0, qos=0)
                     if pms.pms_dictionary['PM2_5'] is not None:
-                        await client.publish(TOPIC_PM2_5, str(pms.pms_dictionary['PM2_5']), retain=0, qos=0)
+                        await client.publish(T_PM2_5, str(pms.pms_dictionary['PM2_5']), retain=0, qos=0)
                     if pms.pms_dictionary['PM2_5_ATM'] is not None:
-                        await client.publish(TOPIC_PM2_5_ATM, str(pms.pms_dictionary['PM2_5_ATM']), retain=0, qos=0)
+                        await client.publish(T_PM2_5_ATM, str(pms.pms_dictionary['PM2_5_ATM']), retain=0, qos=0)
                     if pms.pms_dictionary['PM10_0'] is not None:
-                        await client.publish(TOPIC_PM10_0, str(pms.pms_dictionary['PM10_0']), retain=0, qos=0)
+                        await client.publish(T_PM10_0, str(pms.pms_dictionary['PM10_0']), retain=0, qos=0)
                     if pms.pms_dictionary['PM10_0_ATM'] is not None:
-                        await client.publish(TOPIC_PM10_0_ATM, str(pms.pms_dictionary['PM10_0_ATM']), retain=0, qos=0)
+                        await client.publish(T_PM10_0_ATM, str(pms.pms_dictionary['PM10_0_ATM']), retain=0, qos=0)
                     if pms.pms_dictionary['PCNT_0_3'] is not None:
-                        await client.publish(TOPIC_PCNT_0_3, str(pms.pms_dictionary['PCNT_0_3']), retain=0, qos=0)
+                        await client.publish(T_PCNT_0_3, str(pms.pms_dictionary['PCNT_0_3']), retain=0, qos=0)
                     if pms.pms_dictionary['PCNT_0_5'] is not None:
-                        await client.publish(TOPIC_PCNT_0_5, str(pms.pms_dictionary['PCNT_0_5']), retain=0, qos=0)
+                        await client.publish(T_PCNT_0_5, str(pms.pms_dictionary['PCNT_0_5']), retain=0, qos=0)
                     if pms.pms_dictionary['PCNT_1_0'] is not None:
-                        await client.publish(TOPIC_PCNT_1_0, str(pms.pms_dictionary['PCNT_1_0']), retain=0, qos=0)
+                        await client.publish(T_PCNT_1_0, str(pms.pms_dictionary['PCNT_1_0']), retain=0, qos=0)
                     if pms.pms_dictionary['PCNT_2_5'] is not None:
-                        await client.publish(TOPIC_PCNT_2_5, str(pms.pms_dictionary['PCNT_2_5']), retain=0, qos=0)
+                        await client.publish(T_PCNT_2_5, str(pms.pms_dictionary['PCNT_2_5']), retain=0, qos=0)
                     if pms.pms_dictionary['PCNT_5_0'] is not None:
-                        await client.publish(TOPIC_PCNT_5_0, str(pms.pms_dictionary['PCNT_5_0']), retain=0, qos=0)
+                        await client.publish(T_PCNT_5_0, str(pms.pms_dictionary['PCNT_5_0']), retain=0, qos=0)
                     if pms.pms_dictionary['PCNT_10_0'] is not None:
-                        await client.publish(TOPIC_PCNT_10_0, str(pms.pms_dictionary['PCNT_10_0']), retain=0, qos=0)
-            if not BME280_sensor_faulty:
-                if bmes.values[0][:-1] is not None:
-                    await client.publish(TOPIC_TEMP, bmes.values[0][:-1], retain=0, qos=0)
+                        await client.publish(T_PCNT_10_0, str(pms.pms_dictionary['PCNT_10_0']), retain=0, qos=0)
+            if not BME280_f:
+                if temp_avg is not None:
+                    await client.publish(T_TEMP, str(temp_avg), retain=0, qos=0)
                 if bmes.values[2][:-1] is not None:
-                    await client.publish(TOPIC_RH, bmes.values[2][:-1], retain=0, qos=0)
+                    await client.publish(T_RH, str(rh_avg), retain=0, qos=0)
                 if bmes.values[1][:-3] is not None:
-                    await client.publish(TOPIC_PRESSURE, bmes.values[1][:-3], retain=0, qos=0)
+                    await client.publish(T_PRESS, str(press_avg), retain=0, qos=0)
                 if aq.aqinndex is not None:
-                    await client.publish(TOPIC_AIRQUALITY, str(aq.aqinndex), retain=0, qos=0)
-            if not MHZ19_sensor_faulty:
+                    await client.publish(T_AIRQ, str(aq.aqinndex), retain=0, qos=0)
+            if not MHZ19_f:
                 if co2s.co2_average is not None:
-                    await client.publish(TOPIC_CO2, str(co2s.co2_average), retain=0, qos=0)
+                    await client.publish(T_CO2, str(co2s.co2_average), retain=0, qos=0)
+
 
 # For MQTT_AS
-config['server'] = MQTT_SERVER
-config['user'] = MQTT_USER
-config['password'] = MQTT_PASSWORD
-config['port'] = MQTT_PORT
-config['client_id'] = CLIENT_ID
-if MQTT_USE_SSL == "True":
+config['server'] = MQSRV
+config['user'] = MQUSR
+config['password'] = MQPW
+config['port'] = MQP
+config['client_id'] = CLID
+if MQSL == "True":
     config['ssl'] = True
 else:
     config['ssl'] = False
@@ -767,15 +770,15 @@ client = MQTTClient(config)
 
 async def main():
     loop = asyncio.get_event_loop()
-    if START_NETWORK == 1:
+    if SNET == 1:
         loop.create_task(net.net_upd_loop())
     loop.create_task(pms.read_async_loop())
     loop.create_task(co2s.read_co2_loop())
     loop.create_task(aq.upd_aq_loop())
     loop.create_task(upd_status_loop())
-    if DEBUG_SCREEN_ACTIVE == 1:
+    if DEBUG == 1:
         loop.create_task(show_what_i_do())
-    if START_MQTT == 1:
+    if SMQTT == 1:
         loop.create_task(mqtt_up_loop())
         loop.create_task(mqtt_publish_loop())
     loop.create_task(update_screen_loop())

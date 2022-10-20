@@ -1,5 +1,7 @@
 Update 20.10.2022:
-- added average calculation form temp, rh and pressure (list of 20 values, pop last value out from the list when size 20)
+- added average calculation for temp, rh and pressure (list of 20 values, pop last value out from the list when size 20)
+- average calculation slows reading changes, but in other hand one or two sensor failures do not cause problems
+- mqtt messages are now converted to str due to fact MQTT_AS calculates len of mqtt message, and if message contains float, it crashes
 - shortened variable names due to memory limits (ILI display init typically fails due to memory shortage)
 - gc.collect() and gc.threshold(gc.mem_free() // 4 + gc.mem_alloc()) repeated in the code
 - added error solutions and now raise errors if display is broken etc

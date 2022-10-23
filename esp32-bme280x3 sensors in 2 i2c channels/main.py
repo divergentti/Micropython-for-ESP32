@@ -196,21 +196,22 @@ async def read_sensors_loop():
             s3_temp_list.append(round(float(bmeu.values[0][:-1]), 1) + TEMP_CORRECTION_3)
             s3_rh_list.append(round(float(bmeu.values[2][:-1]), 1) + RH_CORRECTION_3)
             s3_press_list.append(round(float(bmeu.values[1][:-3]), 1) + PRESSURE_CORRECTION_3)
-
+        gc.collect()
+        gc.threshold(gc.mem_free() // 4 + gc.mem_alloc())
         if len(s1_temp_list) >= 10:
-            s1_press_list.pop(0)
+            s1_temp_list.pop(0)
         if len(s1_rh_list) >= 10:
             s1_rh_list.pop(0)
         if len(s1_press_list) >= 10:
             s1_press_list.pop(0)
         if len(s2_temp_list) >= 10:
-            s2_press_list.pop(0)
+            s2_temp_list.pop(0)
         if len(s2_rh_list) >= 10:
             s2_rh_list.pop(0)
         if len(s2_press_list) >= 10:
             s2_press_list.pop(0)
         if len(s3_temp_list) >= 10:
-            s3_press_list.pop(0)
+            s3_temp_list.pop(0)
         if len(s3_rh_list) >= 10:
             s3_rh_list.pop(0)
         if len(s3_press_list) >= 10:

@@ -24,8 +24,9 @@ Each sensor has MQTT messages for temperature, moisture and pressure defined in 
 MQTT messages could be sent to Influxdb and from influxdb to Grafana.
 
 Version: 6.10.2022: Jari Hiltunen & Tarmo Hiltunen
+Version 23.10.2022: added 10 value averages for measurements, fixed correction multipliers. Lowered speed.
 
-Tested with 3 x BME280 + ESP32-D Wroom (4Mb) + micropython version 1.19.1
+Tested with 3 x BME280 + ESP32-D Wroom (4Mb) + micropython version 1.19.1 and with faulty connections.
 """
 from machine import SoftI2C, Pin, freq, reset
 import uasyncio as asyncio
@@ -35,23 +36,37 @@ from MQTT_AS import MQTTClient, config
 import WIFICONN_AS as WifiNet
 import BME280_float as BmE
 from json import load
+import esp32
 gc.collect()
+gc.threshold(gc.mem_free() // 4 + gc.mem_alloc())
 
 # Globals
 mqtt_up = False
 broker_uptime = 0
 sensor1faulty = False
+sensor1tempave = None
+sensor1rhave = None
+sensor1presave = None
+
 sensor2faulty = False
+sensor2tempave = None
+sensor2rhave = None
+sensor2presave = None
+
 sensor3faulty = False
+sensor3tempave = None
+sensor3rhave = None
+sensor3presave = None
+
 
 try:
     f = open('parameters.py', "r")
     #  2 x I2C channels and their pins
     from parameters import I2C1_SCL_PIN, I2C1_SDA_PIN, I2C2_SCL_PIN, I2C2_SDA_PIN
     f.close()
-except OSError:  # open failed
-    print("parameter.py-file missing! Can not continue!")
-    raise
+except OSError as e:
+    raise ValueError("Error: %s - parameter.py-file missing! Can not continue!" % e)
+
 
 try:
     f = open('runtimeconfig.json', 'r')
@@ -104,18 +119,16 @@ try:
         P_THOLD_3 = data['PRESSURE_TRESHOLD_3']
         PRESSURE_CORRECTION_3 = data['PRESSURE_CORRECTION_3']
 
-except OSError:
-    print("Runtime parameters missing. Can not continue!")
-    sleep(30)
-    raise
+except OSError as e:
+    raise ValueError("Error %s: Runtime parameters missing. Can not continue!" % e)
 
 
 def resolve_date():
     (year, month, mdate, hour, minute, second, wday, yday) = localtime()
     #  Finnish
     weekdays = ['Ma', 'Ti', 'Ke', 'To', 'Pe', 'La', 'Su']
-    summer_march = mktime((year, 3, (14 - (int(5 * year / 4 + 1)) % 7), 1, 0, 0, 0, 0, 0))
-    winter_december = mktime((year, 10, (7 - (int(5 * year / 4 + 1)) % 7), 1, 0, 0, 0, 0, 0))
+    summer_march = mktime((year, 3, (14 - (int(5 * year / 4 + 1)) % 7), 1, 0, 0, 0, 0))
+    winter_december = mktime((year, 10, (7 - (int(5 * year / 4 + 1)) % 7), 1, 0, 0, 0, 0))
     if mktime(localtime()) < summer_march:
         dst = localtime(mktime(localtime()) + 7200)
     elif mktime(localtime()) < winter_december:
@@ -128,8 +141,9 @@ def resolve_date():
     return day, time, weekdays[wday]
 
 
-# Kick in some speed, max 240000000, normal 160000000, min with WiFi 80000000
-freq(240000000)
+# Kick in some speed, max 240000000, normal 160000000, min with Wi-Fi 80000000
+# freq(240000000)
+freq(80000000)
 
 # Network handshake
 net = WifiNet.ConnectWiFi(SSID1, PASSWORD1, SSID2, PASSWORD2, NTPSERVER, DHCP_NAME, START_WEBREPL, WEBREPL_PASSWORD)
@@ -155,6 +169,76 @@ except OSError as e:
     sensor3faulty = True
 
 
+async def read_sensors_loop():
+    global sensor1tempave, sensor1rhave, sensor1presave, sensor2tempave, sensor2rhave, sensor2presave, \
+        sensor3tempave, sensor3rhave, sensor3presave
+    s1_temp_list = []
+    s1_rh_list = []
+    s1_press_list = []
+    s2_temp_list = []
+    s2_rh_list = []
+    s2_press_list = []
+    s3_temp_list = []
+    s3_rh_list = []
+    s3_press_list = []
+
+    #  Read values from sensor once per second, add them to the array, delete oldest when size 10
+    while True:
+        if not sensor1faulty:
+            s1_temp_list.append(round(float(bmes.values[0][:-1]), 1) + TEMP_CORRECTION_1)
+            s1_rh_list.append(round(float(bmes.values[2][:-1]), 1) + RH_CORRECTION_1)
+            s1_press_list.append(round(float(bmes.values[1][:-3]), 1) + PRESSURE_CORRECTION_1)
+        if not sensor2faulty:
+            s2_temp_list.append(round(float(bmet.values[0][:-1]), 1) + TEMP_CORRECTION_2)
+            s2_rh_list.append(round(float(bmet.values[2][:-1]), 1) + RH_CORRECTION_2)
+            s2_press_list.append(round(float(bmet.values[1][:-3]), 1) + PRESSURE_CORRECTION_2)
+        if not sensor3faulty:
+            s3_temp_list.append(round(float(bmeu.values[0][:-1]), 1) + TEMP_CORRECTION_3)
+            s3_rh_list.append(round(float(bmeu.values[2][:-1]), 1) + RH_CORRECTION_3)
+            s3_press_list.append(round(float(bmeu.values[1][:-3]), 1) + PRESSURE_CORRECTION_3)
+
+        if len(s1_temp_list) >= 10:
+            s1_press_list.pop(0)
+        if len(s1_rh_list) >= 10:
+            s1_rh_list.pop(0)
+        if len(s1_press_list) >= 10:
+            s1_press_list.pop(0)
+        if len(s2_temp_list) >= 10:
+            s2_press_list.pop(0)
+        if len(s2_rh_list) >= 10:
+            s2_rh_list.pop(0)
+        if len(s2_press_list) >= 10:
+            s2_press_list.pop(0)
+        if len(s3_temp_list) >= 10:
+            s3_press_list.pop(0)
+        if len(s3_rh_list) >= 10:
+            s3_rh_list.pop(0)
+        if len(s3_press_list) >= 10:
+            s3_press_list.pop(0)
+
+        if len(s1_temp_list) > 1:
+            sensor1tempave = round(sum(s1_temp_list) / len(s1_temp_list), 1)
+        if len(s1_rh_list) > 1:
+            sensor1rhave = round(sum(s1_rh_list) / len(s1_rh_list), 1)
+        if len(s1_press_list) > 1:
+            sensor1presave = round(sum(s1_press_list) / len(s1_press_list), 1)
+        if len(s2_temp_list) > 1:
+            sensor2tempave = round(sum(s2_temp_list) / len(s2_temp_list), 1)
+        if len(s2_rh_list) > 1:
+            sensor2rhave = round(sum(s2_rh_list) / len(s2_rh_list), 1)
+        if len(s2_press_list) > 1:
+            sensor2presave = round(sum(s2_press_list) / len(s2_press_list), 1)
+        if len(s3_temp_list) > 1:
+            sensor3tempave = round(sum(s3_temp_list) / len(s3_temp_list), 1)
+        if len(s3_rh_list) > 1:
+            sensor3rhave = round(sum(s3_rh_list) / len(s3_rh_list), 1)
+        if len(s3_press_list) > 1:
+            sensor3presave = round(sum(s3_press_list) / len(s3_press_list), 1)
+        gc.collect()
+        gc.threshold(gc.mem_free() // 4 + gc.mem_alloc())
+        await asyncio.sleep(1)
+
+
 async def mqtt_up_loop():
     global mqtt_up
     global client
@@ -172,6 +256,11 @@ async def mqtt_up_loop():
         else:
             MQTTClient.DEBUG = False
         client = MQTTClient(config)
+        try:
+            await client.connect()
+        except OSError:
+            await asyncio.sleep(5)
+            reset()
         while mqtt_up is False:
             await asyncio.sleep(5)
             try:
@@ -182,7 +271,6 @@ async def mqtt_up_loop():
                 if DEBUG_SCREEN_ACTIVE == 1:
                     print("MQTT error: %s" % e)
                     print("Config: %s" % config)
-
     n = 0
     while True:
         await asyncio.sleep(5)
@@ -206,86 +294,71 @@ def update_mqtt_status(topic, msg, retained):
     if topic.decode('UTF-8') == '$SYS/broker/uptime':
         broker_uptime = msg.decode('UTF-8')
 
-    """ Subscribe mqtt topics for correction multipliers and such. As an example, if
-        temperature measurement is linearly wrong +0,8C, send substraction via mqtt-topic. If measurement is 
-        not linearly wrong, pass range + correction to the topics.
-        Example:
-        if topic == '/device_id/temp/correction/':
-            correction = float(msg)
-            return correction """
-
 
 async def mqtt_publish_loop():
 
     while True:
         if mqtt_up is False:
+            gc.collect()
+            gc.threshold(gc.mem_free() // 4 + gc.mem_alloc())
             await asyncio.sleep(10)
         else:
             await asyncio.sleep(MQTT_INTERVAL)  # Seconds
             if not sensor1faulty:
-                if bmes.values[0][:-1] is not None:
-                    await client.publish(TOPIC_TEMP_1, bmes.values[0][:-1], retain=0, qos=0)
-                if bmes.values[2][:-1] is not None:
-                    await client.publish(TOPIC_RH_1, bmes.values[2][:-1], retain=0, qos=0)
-                if bmes.values[1][:-3] is not None:
-                    await client.publish(TOPIC_PRESSURE_1, bmes.values[1][:-3], retain=0, qos=0)
+                if sensor1tempave is not None:
+                    await client.publish(TOPIC_TEMP_1, str(sensor1tempave), retain=0, qos=0)
+                if sensor1rhave is not None:
+                    await client.publish(TOPIC_RH_1, str(sensor1rhave), retain=0, qos=0)
+                if sensor1presave is not None:
+                    await client.publish(TOPIC_PRESSURE_1, str(sensor1presave), retain=0, qos=0)
             if not sensor2faulty:
                 # I2C channel 2 sensor which SDO is open or set to GND
-                if bmet.values[0][:-1] is not None:
-                    await client.publish(TOPIC_TEMP_2, bmet.values[0][:-1], retain=0, qos=0)
-                if bmet.values[2][:-1] is not None:
-                    await client.publish(TOPIC_RH_2, bmet.values[2][:-1], retain=0, qos=0)
-                if bmet.values[1][:-3] is not None:
-                    await client.publish(TOPIC_PRESSURE_2, bmet.values[1][:-3], retain=0, qos=0)
+                if sensor2tempave is not None:
+                    await client.publish(TOPIC_TEMP_2, str(sensor2tempave), retain=0, qos=0)
+                if sensor2rhave is not None:
+                    await client.publish(TOPIC_RH_2, str(sensor2rhave), retain=0, qos=0)
+                if sensor2presave is not None:
+                    await client.publish(TOPIC_PRESSURE_2, str(sensor2presave), retain=0, qos=0)
             if not sensor3faulty:
                 # I2C channel 2 sensor which SDO is open or set to VCC (3.3 or 5V depending sensor type)
-                if bmeu.values[0][:-1] is not None:
-                    await client.publish(TOPIC_TEMP_3, bmeu.values[0][:-1], retain=0, qos=0)
-                if bmeu.values[2][:-1] is not None:
-                    await client.publish(TOPIC_RH_3, bmeu.values[2][:-1], retain=0, qos=0)
-                if bmeu.values[1][:-3] is not None:
-                    await client.publish(TOPIC_PRESSURE_3, bmeu.values[1][:-3], retain=0, qos=0)
+                if sensor3tempave is not None:
+                    await client.publish(TOPIC_TEMP_3, str(sensor3tempave), retain=0, qos=0)
+                if sensor3rhave is not None:
+                    await client.publish(TOPIC_RH_3, str(sensor3rhave), retain=0, qos=0)
+                if sensor3presave is not None:
+                    await client.publish(TOPIC_PRESSURE_3, str(sensor3presave), retain=0, qos=0)
 
 
 async def show_what_i_do():
     # Output is REPL
 
     while True:
-        print(resolve_date())
+        print("\n1 ---------WIFI------------- 1")
         if START_NETWORK == 1:
-            print("WiFi Connected %s" % net.net_ok)
-            print("WiFi failed connects %s" % net.con_att_fail)
+            print("   WiFi Connected %s, hotspot: %s, signal strength: %s" % (net.net_ok, net.use_ssid, net.strength))
+            print("   IP-address: %s, connection attempts failed %s" % (net.ip_a, net.con_att_fail))
         if START_MQTT == 1:
-            print("MQTT Connected %s" % mqtt_up)
-            # print("MQTT broker uptime %s" % broker_uptime)
-        print("Memory free: %s" % gc.mem_free())
-        print("Memory alloc: %s" % gc.mem_alloc())
-        print("-------")
+            print("   MQTT Connected: %s, broker uptime: %s" % (mqtt_up, broker_uptime))
+        print("   Memory free: %s, allocated: %s" % (gc.mem_free(), gc.mem_alloc()))
+        print("   Heap info %s, hall sensor %s, raw-temp %sC" % (esp32.idf_heap_info(esp32.HEAP_DATA),
+                                                                 esp32.hall_sensor(),
+                                                                 "{:.1f}".format(
+                                                                     ((float(esp32.raw_temperature()) - 32.0)
+                                                                      * 5 / 9))))
+        print("2 -------SENSORDATA--------- 2")
+        if (sensor1tempave is not None) and (sensor1rhave is not None) and (sensor1presave is not None):
+            print("   Sensor1: Temp: %sC, Rh: %s, Pressure: %s" % (sensor1tempave, sensor1rhave, sensor1presave))
+        if (sensor2tempave is not None) and (sensor2rhave is not None) and (sensor2presave is not None):
+            print("   Sensor2: Temp: %sC, Rh: %s, Pressure: %s" % (sensor2tempave, sensor2rhave, sensor2presave))
+        if (sensor3tempave is not None) and (sensor3rhave is not None) and (sensor3presave is not None):
+            print("   Sensor3: Temp: %sC, Rh: %s, Pressure: %s" % (sensor3tempave, sensor3rhave, sensor3presave))
+        print("3 ---------FAULTS------------- 3")
         if sensor1faulty:
             print("Sensor 1 faulty!")
-        else:
-            print("-------")
-            print("Sensor I2C channel 1 0x76")
-            print("Temp: %s" % bmes.values[0][:-1])
-            print("Moisture: %s" % bmes.values[2][:-1])
-            print("Pressure: %s" % bmes.values[1][:-3])
         if sensor2faulty:
             print("Sensor 2 faulty!")
-        else:
-            print("-------")
-            print("Sensor I2C channel 2 0x76")
-            print("Temp: %s" % bmet.values[0][:-1])
-            print("Moisture: %s" % bmet.values[2][:-1])
-            print("Pressure: %s" % bmet.values[1][:-3])
         if sensor3faulty:
             print("Sensor 3 faulty!")
-        else:
-            print("-------")
-            print("Sensor I2C channel 2 0x77")
-            print("Temp: %s" % bmeu.values[0][:-1])
-            print("Moisture: %s" % bmeu.values[2][:-1])
-            print("Pressure: %s" % bmeu.values[1][:-3])
-            print("-------")
         await asyncio.sleep(5)
 
 
@@ -308,6 +381,7 @@ async def main():
     if START_MQTT == 1:
         loop.create_task(mqtt_up_loop())
         loop.create_task(mqtt_publish_loop())
+    loop.create_task(read_sensors_loop())
     loop.run_forever()
 
 

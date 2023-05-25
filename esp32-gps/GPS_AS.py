@@ -1,5 +1,5 @@
 """
-  25.05.2025: Jari Hiltunen
+  25.05.2023: Jari Hiltunen
 
   For asyncronous StreamReader by Divergentti / Jari Hiltunen
   Add loop into your code loop.create_task(objectname.read_async_loop())

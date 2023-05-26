@@ -61,20 +61,6 @@ class GPSModule:
         self.readdata = ""
         self.foundcode = ""
         self.settime = settime
-        self.speed = ""
-        self.speed_m = ""
-        self.curr_lat = ""
-        self.curr_lat_n = ""
-        self.curr_lon = ""
-        self.curr_lon_e = ""
-        self.mode = ""
-        self.mode_fix = ""
-        self.total_sv = ""
-        self.svprn = ""
-        self.elevdegrees = ""
-        self.azimuth = ""
-        self.snr = ""
-
 
     @staticmethod
     def checksum(nmeaword):
@@ -125,10 +111,14 @@ class GPSModule:
             self.checksum(datain)
         except ValueError:
             self.readdata = "Bad formed"
+            return False
         except False:
             if self.debug is True:
                 print ("Bad formed")
             self.readdata = "Bad formed"
+            return False
+        return datain.decode("utf-8")
+
 
     async def read_async_loop(self):
 
@@ -195,11 +185,9 @@ class GPSModule:
                     # 9 = Mode indicator: A: Autonomous mode,  D: Differential mode, E: Estimated (dead reckoning) mode,  M: Manual Input mode, S: Simulator mode, N: Data not valid
                     # 10 = The checksum data, always begins with *
                     parts = self.readdata.split(',')
-                    self.speed = parts[7]
-                    self.speed_m = parts[8]
-                    print("GPVTG values:")
-                    print ("Speed: %s" %self.speed)
-                    print("---")
+                    if self.debug is True:
+                        print("GPVTG: %s" %parts)
+                        print("---")
                 if self.foundcode == 'GPGLL':
                     # 0 = Message ID $GPGLL, 1 = Latitude in dd mm,mmmm format (0-7 decimal places)
                     # 2 = Direction of latitude N: North S: South
@@ -217,17 +205,9 @@ class GPSModule:
                     # S: Simulator mode
                     # N: Data not valid
                     parts = self.readdata.split(',')
-                    self.curr_lat = parts[1]
-                    self.curr_lat_n = parts[2]
-                    self.curr_lon = parts[3]
-                    self.curr_lon_e = parts[4]
                     if self.debug is True:
-                        print("GPGLL values:")
-                        print("Current latitude: %s" %self.curr_lat)
-                        print("Current latitude direction: %s" % self.curr_lat_n)
-                        print("Current longitude: %s" % self.curr_lon)
-                        print("Current longitude direction: %s" % self.curr_lon_e)
-                        print("----")
+                        print("GPGLL parts: %s" %parts)
+                        print("---")
                 if self.foundcode == 'GPGSV':
                     # NMEA-0183 message:
                     # 1 = Total number of messages of this type in this cycle,2 = Message number,
@@ -235,18 +215,8 @@ class GPSModule:
                     # 4 = SV PRN number, 5= Elevation in degrees, 90 maximum, 6 = Azimuth, dg from true north
                     # 7 = SNR, 00-99 dB,8-19 = Information about SVs'
                     parts = self.readdata.split(',')
-                    self.total_sv = parts[3]
-                    self.svprn = parts[4]
-                    self.elevdegrees = parts[5]
-                    self.azimuth = parts[6]
-                    self.snr = parts[7]
                     if self.debug is True:
-                        print("GPGSV values:")
-                        print("Total SV: %s" % self.total_sv)
-                        print("SV prn: %s" % self.svprn)
-                        print("Elevation %s degrees. " % self.elevdegrees)
-                        print("Azimuth: %s" % self.azimuth)
-                        print("SNR ratio: %s" % self.snr)
+                        print("GPGSV parts %s: " %parts)
                         print("---")
                 if self.foundcode == 'GPGSA':
                     # 1= Mode:M=Manual, forced to operate in 2D or 3D, A=Automatic, 3D/2D
@@ -254,17 +224,16 @@ class GPSModule:
                     # 3-6 = IDs of SVs, PDOP,HDOP and VDOP
                     # 7 = The checksum data, always begins with * (NMEA-0183 version 4.10 GPS/GLonass etc)
                     parts = self.readdata.split(',')
-                    self.mode = parts[1]
-                    self.mode_fix = parts[2]
-                    print("GPGSA values:")
-                    print("GPGSA: %s" % parts)
-                    print("---")
+                    if self.debug is True:
+                        print("GPGSA: %s" % parts)
+                        print("---")
                 if self.foundcode == 'GPRMC':
                     # 1 = UTC of position fix, 2= Status A=active or V=void,3 = Latitude
                     # 4 = Longitude, 5 = Speed over the ground in knots, 6 = Track angle in degrees (True)
                     # 7 = Date, 8= Magnetic variation, in degrees
                     # 9 = The checksum data, always begins with *
                     parts = self.readdata.split(',')
-
-
+                    if self.debug is True:
+                        print("GPRMC: %s" %parts)
+                        print("---")
             await asyncio.sleep_ms(100)

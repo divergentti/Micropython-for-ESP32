@@ -75,6 +75,7 @@ class GPSModule:
         self.azimuth = ""
         self.snr = ""
 
+
     @staticmethod
     def checksum(nmeaword):
         linebegin = nmeaword.find(b'$')
@@ -95,7 +96,6 @@ class GPSModule:
         if hex(csum) == hex(int(cksum,16)):
             return True
         else:
-            print ("False")
             return False
 
     @staticmethod
@@ -121,11 +121,15 @@ class GPSModule:
             datain = await port.readline()
         except TimeoutError:
             self.moduleUart.init()
-            pass
         try:
             self.checksum(datain)
-        except UnicodeError:
-            pass
+        except ValueError:
+            self.readdata = "Bad formed"
+        except False:
+            if self.debug is True:
+                print ("Bad formed")
+            self.readdata = "Bad formed"
+
     async def read_async_loop(self):
 
         while True:

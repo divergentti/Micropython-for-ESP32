@@ -80,9 +80,9 @@ class GPSModule:
         for c in chksumdata:
             csum ^= ord(c)
         if hex(csum) == hex(int(cksum,16)):
-            return True
+            return chksumdata
         else:
-            return False
+            return "CRCError"
 
     @staticmethod
     def convertToDegree(rawdegrees):
@@ -108,16 +108,14 @@ class GPSModule:
         except TimeoutError:
             self.moduleUart.init()
         try:
-            self.checksum(datain)
+            self.readdata = self.checksum(datain)
         except ValueError:
-            self.readdata = "Bad formed"
             return False
         except False:
             if self.debug is True:
                 print ("Bad formed")
-            self.readdata = "Bad formed"
             return False
-        return datain.decode("utf-8")
+        return start_code+self.readdata
 
 
     async def read_async_loop(self):
@@ -137,6 +135,7 @@ class GPSModule:
                     for i in range (len(GPcodes)):
                         if self.foundcode == GPcodes[i][0]:
                             print("Code: %s = %s" % (self.foundcode, GPcodes[i][1]))
+                print(self.foundcode)
                 if self.foundcode == 'GPGGA':
                     # 0 = Message ID $GPGGA
                     # 1=  UTC of position fix

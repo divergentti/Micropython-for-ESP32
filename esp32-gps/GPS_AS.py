@@ -11,7 +11,7 @@
     BD or GB - Beidou,GA - Galileo, GL - GLONASS.
 
   Usage:
-        # If needed, add debug= three letter NMEA code in driver (GGA/VTG/GLL/GSV/GSA/RMC)
+        # If needed, add debug= three letter NMEA code in driver (GGA/VTG/GLL/GSV/GSA/RMC) or debug_gen for general
         gps1 = GPS.GPSModule(rxpin=16, txpin=17, uart=2, interval = 3)
 
         .. your async code, which access values of the gps1 object, such as gps1.gpstime ...
@@ -26,7 +26,7 @@
             asyncio.run(main())
         except MemoryError:
             reset()
-        
+
 """
 
 from machine import UART
@@ -38,12 +38,14 @@ start_code = '$'
 system_code = 'GP'
 
 class GPSModule:
-    #  Default UART2, rx=9, tx=10, readinterval = 3 seconds. Avoid UART1.
-    def __init__(self, rxpin=16, txpin=17, uart=2, interval=3, debug_gga = False, debug_vtg = False,
-                 debug_gll = False, debug_gsv=False, debug_gsa=False, debug_rmc = False):
+    #  Default UART2, rx=9, tx=10, readinterval = 1 seconds. Avoid UART1.
+    def __init__(self, rxpin=16, txpin=17, uart=2, interval=1, timeout = 60, debug_gen=False,
+                 debug_gga = False, debug_vtg = False, debug_gll = False, debug_gsv=False,
+                 debug_gsa=False, debug_rmc = False):
         self.moduleUart = UART(uart, 9600, 8, None, 1, rx=rxpin, tx=txpin)
         self.moduleUart.init()
         self.read_interval = interval
+        self.timeout = timeout
         self.gps_fix_status = False
         self.latitude = ""
         self.longitude = ""
@@ -64,6 +66,7 @@ class GPSModule:
         self.gspeed = ""
         self.gspeed_k = ""
         self.vtgmode = ""
+        self.debug_gen = debug_gen
         self.debug_gga = debug_gga
         self.debug_vtg = debug_vtg
         self.debug_gll = debug_gll
@@ -73,6 +76,7 @@ class GPSModule:
         self.readtime =  time.time()
         self.readdata = ""
         self.foundcode = ""
+
 
 
     @staticmethod
@@ -117,35 +121,43 @@ class GPSModule:
             return stringin[pos+3:pos+6]
 
     async def reader(self):
-        datain = ""
         port = asyncio.StreamReader(self.moduleUart)
         try:
             datain = await port.readline()
-        except TimeoutError:
-            self.moduleUart.init()
+        except MemoryError:
+            return False
         try:
             self.readdata = self.checksum(datain)
         except ValueError:
             return False
         except False:
-            if self.debug_gga is True:
+            if self.debug_gen is True:
                 print ("Bad formed")
             return False
+        self.readtime = time.time()
         return start_code+self.readdata
 
 
     async def read_async_loop(self):
 
         while True:
+            if (time.time() - self.readtime) > self.timeout:
+                if self.debug_gen is True:
+                    print ("UART timed out: %s" % (time.time() - self.readtime))
+                self.moduleUart.init()
             if (time.time() - self.readtime) >= self.read_interval:
                 gc.collect()
                 try:
                     self.readdata = str(await self.reader())
-                except MemoryError:
+                except MemoryError as error:
+                    if self.debug_gen is True:
+                        print("Readdata error %s" % error)
                     continue
                 try:
                     self.foundcode =self.findgpscode(self.readdata)
-                except ValueError:
+                except ValueError as error:
+                    if self.debug_gen is True:
+                        print("Found error %s" % error)
                     continue
                 if self.foundcode == 'GGA':
                     # 0 = Message ID $GPGGA

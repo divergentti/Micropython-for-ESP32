@@ -5,13 +5,17 @@
   Add loop into your code loop.create_task(objectname.read_async_loop())
   NEO-6M datasheet https://content.u-blox.com/sites/default/files/products/documents/NEO-6_DataSheet_%28GPS.G6-HW-09005%29.pdf
 
+  Time-To-First-Fix 26 seconds after cold start, 1 seconds warm start
+  Maximum update rate 5 Hz
+  Accuracy 2.5 meters
+
   Protocol: NMEA including GSV, RMC, GSA, GGA, GLL, VTG, TXT
 
     GP = for GPS codes
     BD or GB - Beidou,GA - Galileo, GL - GLONASS.
 
   Usage:
-        # If needed, add debug= three letter NMEA code in driver (GGA/VTG/GLL/GSV/GSA/RMC) or debug_gen for general
+        # If needed, add debug= three letter NMEA code in driver (GGA/VTG/GLL/GSV/GSA/RMC)
         gps1 = GPS.GPSModule(rxpin=16, txpin=17, uart=2, interval = 3)
 
         .. your async code, which access values of the gps1 object, such as gps1.gpstime ...
@@ -116,7 +120,7 @@ class GPSModule:
             return "Too short"
         pos = stringin.find(start_code+system_code)
         if pos == -1:
-            return "Not found %s" %start_code+system_code
+            return "Not found: %s" %start_code+system_code
         else:
             return stringin[pos+3:pos+6]
 
@@ -124,16 +128,16 @@ class GPSModule:
         port = asyncio.StreamReader(self.moduleUart)
         try:
             datain = await port.readline()
-        except MemoryError:
-            return False
+        except MemoryError as error:
+            return "Reader error: %s" %error
         try:
             self.readdata = self.checksum(datain)
-        except ValueError:
-            return False
+        except ValueError as error:
+            return "Reader error: %s" %error
         except False:
-            if self.debug_gen is True:
-                print ("Bad formed")
-            return False
+            return "Reader: Bad formed"
+        if self.debug_gen is True:
+            print("Data read: %s" %self.readdata)
         self.readtime = time.time()
         return start_code+self.readdata
 
@@ -141,12 +145,7 @@ class GPSModule:
     async def read_async_loop(self):
 
         while True:
-            if (time.time() - self.readtime) > self.timeout:
-                if self.debug_gen is True:
-                    print ("UART timed out: %s" % (time.time() - self.readtime))
-                self.moduleUart.init()
             if (time.time() - self.readtime) >= self.read_interval:
-                gc.collect()
                 try:
                     self.readdata = str(await self.reader())
                 except MemoryError as error:
@@ -159,25 +158,8 @@ class GPSModule:
                     if self.debug_gen is True:
                         print("Found error %s" % error)
                     continue
+
                 if self.foundcode == 'GGA':
-                    # 0 = Message ID $GPGGA
-                    # 1=  UTC of position fix
-                    # 2 = Latitude
-                    # 3 = Direction of latitude: N: North, S: South
-                    # 4 = Longitude
-                    # 5 = Direction of longitude: E: East, W: West
-                    # 6 = GPS Quality indicator: 0: Fix not valid, 1: GPS fix, 2: Differential GPS fix (DGNSS), SBAS,
-                    #        OmniSTAR VBS, Beacon, RTX in GVBS mode, 3: Not applicable
-                    #     4: RTK Fixed, xFill, 5: RTK Float, OmniSTAR XP/HP, Location RTK, RTX, 6: INS Dead reckoning
-                    # 7 = Number of SVs in use, range from 00 through to 24+
-                    # 8 = HDOP
-                    # 9 = Orthometric height (MSL reference)
-                    # 10 = M: unit of measure for orthometric height is meters
-                    # 11 = Geoid separation
-                    # 12 = M: geoid separation measured in meters
-                    # 13 = Age of differential GPS data record, Type 1 or Type 9. Null field when DGPS is not used.
-                    # 14 = Reference station ID, range 0000 to 4095. A null field when any reference
-                    #      station ID is selected and no corrections are received.
                     parts = self.readdata.split(',')
                     if len(parts) == 15:
                         try:
@@ -217,17 +199,6 @@ class GPSModule:
                             print("Height of geoid above WGS84 ellipsoid: %s %s" % (self.geoids, self.geoids_m))
                             print("--- end of GGA ---")
                 if self.foundcode == 'VTG':
-                    # 0 = Message ID $GPVTG
-                    # 1 = Track made good (degrees true)
-                    # 2 = T: track made good is relative to true north
-                    # 3 = Track made good (degrees magnetic)
-                    # 4 = M: track made good is relative to magnetic north
-                    # 5 = Speed, in knots
-                    # 6 = N: speed is measured in knots
-                    # 7 = Speed over ground in kilometers/hour (kph)
-                    # 8 = K: speed over ground is measured in kph
-                    # 9 = Mode indicator: A: Autonomous mode,  D: Differential mode, E: Estimated (dead reckoning) mode,
-                    #     M: Manual Input mode, S: Simulator mode, N: Data not valid
                     parts = self.readdata.split(',')
                     if len(parts) == 10:
                         self.trackd = parts[1]
@@ -300,4 +271,9 @@ class GPSModule:
                     if len(parts) == 9:
                         if self.debug_rmc is True:
                             print("--- RMC not implemented ---")
-            await asyncio.sleep_ms(100)
+                if (time.time() - self.readtime) > self.timeout:
+                    self.moduleUart.init()
+                    if self.debug_gen is True:
+                        print("Timed out, new UART init!")
+                gc.collect()
+            await asyncio.sleep_ms(25)

@@ -1,5 +1,5 @@
 """
-  24.05.2025: Jari Hiltunen
+  29.05.2023: Jari Hiltunen, verion 0.1
 
   For asyncronous StreamReader by Divergentti / Jari Hiltunen
   Add loop into your code loop.create_task(objectname.read_async_loop())
@@ -10,6 +10,23 @@
     GP = for GPS codes
     BD or GB - Beidou,GA - Galileo, GL - GLONASS.
 
+  Usage:
+        # If needed, add debug= three letter NMEA code in driver (GGA/VTG/GLL/GSV/GSA/RMC)
+        gps1 = GPS.GPSModule(rxpin=16, txpin=17, uart=2, interval = 3)
+
+        .. your async code, which access values of the gps1 object, such as gps1.gpstime ...
+
+        async def main():
+            loop = asyncio.get_event_loop()
+            loop.create_task(gps1.read_async_loop())
+            loop.run_forever()
+
+        if __name__ == "__main__":
+        try:
+            asyncio.run(main())
+        except MemoryError:
+            reset()
+        
 """
 
 from machine import UART
@@ -17,62 +34,58 @@ import time
 import uasyncio as asyncio
 import gc
 
-# This list is about all, you could shrink to Neo6M GSV, RMC, GSA, GGA, GLL, VTG, TXT
-GPcodes = [['GPAAM', 'Waypoint Arrival Alarm'], ['GPALM', 'GPS Almanac Data'], ['GPAPA', 'Autopilot Sentence "A"'],
-['GPAPB', 'Autopilot Sentence "B"'], ['GPASD', 'Autopilot System Data'],
-['GPBEC', 'Bearing & Distance to Waypoint, Dead Reckoning'], ['GPBOD', 'Bearing, Origin to Destination'],
-['GPBWC', 'Bearing & Distance to Waypoint, Great Circle'], ['GPBWR', 'Bearing & Distance to Waypoint, Rhumb Line'],
-['GPBWW', 'Bearing, Waypoint to Waypoint'], ['GPDBT', 'Depth Below Transducer'], ['GPDCN', 'Decca Position'],
-['GPDPT', 'Depth'], ['GPFSI', 'Frequency Set Information'], ['GPGGA', 'Global Positioning System Fix Data'],
-['GPGLC', 'Geographic Position, Loran'], ['GPGLL', 'Geographic Position, Latitude/Longitude'],
-['GPGSA', 'GPS DOP and Active Satellites'], ['GPGSV', 'GPS Satellites in View'], ['GPGXA', 'TRANSIT Position'],
-['GPHDG', 'Heading, Deviation & Variation'], ['GPHDT', 'Heading, True'], ['GPHSC', 'Heading Steering Command'],
-['GPLCD', 'Loran C Signal Data'], ['GPMTA', 'Air Temperature (to be phased out)'], ['GPMTW', 'Water Temperature'],
-['GPMWD', 'Wind Direction'], ['GPMWV', 'Wind Speed and Angle'], ['GPOLN', 'Omega Lane Numbers'],
-['GPOSD', 'Own Ship Data'], ['GPR00', 'Waypoint active route (not standard)'],
-['GPRMA', 'Recommended Minimum Specific Loran C Data'], ['GPRMB', 'Recommended Minimum Navigation Information'],
-['GPRMC', 'Recommended Minimum Specific GPS/TRANSIT Data'], ['GPROT', 'Rate of Turn'],
-['GPRPM', 'Revolutions'], ['GPRSA', 'Rudder Sensor Angle'], ['GPRSD', 'RADAR System Data'],
-['GPRTE', 'Routes'], ['GPSFI', 'Scanning Frequency Information'], ['GPSTN', 'Multiple Data ID'],
-['GPTXT', 'Text'],
-['GPTRF', 'Transit Fix Data'], ['GPTTM', 'Tracked Target Message'], ['GPVBW', 'Dual Ground/Water Speed'],
-['GPVDR', 'Set and Drift'], ['GPVHW', 'Water Speed and Heading'], ['GPVLW', 'Distance Traveled through the Water'],
-['GPVPW', 'Speed, Measured Parallel to Wind'], ['GPVTG', 'Track Made Good and Ground Speed'],
-['GPWCV', 'Waypoint Closure Velocity'], ['GPWNC', 'Distance, Waypoint to Waypoint'], ['GPWPL', 'Waypoint Location'],
-['GPXDR', 'Transducer Measurements'], ['GPXTE', 'Cross' , 'Track Error, Measured'],
-['GPXTR', 'Cross' , 'Track Error, Dead Reckoning'], ['GPZDA', 'Time & Date'],
-['GPZFO', 'UTC & Time from Origin Waypoint'], ['GPZTG', 'UTC & Time to Destination Waypoint']]
-# GPcodes[-code][text related to code]
 start_code = '$'
+system_code = 'GP'
 
 class GPSModule:
     #  Default UART2, rx=9, tx=10, readinterval = 3 seconds. Avoid UART1.
-    def __init__(self, rxpin=16, txpin=17, uart=2, interval=3, settime=True, debug = False):
+    def __init__(self, rxpin=16, txpin=17, uart=2, interval=3, debug_gga = False, debug_vtg = False,
+                 debug_gll = False, debug_gsv=False, debug_gsa=False, debug_rmc = False):
         self.moduleUart = UART(uart, 9600, 8, None, 1, rx=rxpin, tx=txpin)
         self.moduleUart.init()
         self.read_interval = interval
         self.gps_fix_status = False
         self.latitude = ""
         self.longitude = ""
+        self.quality_indicator = ""
         self.satellites = ""
-        self.GPStime = ""
-        self.debug = debug
+        self.gpstime = ""
+        self.hdop = ""
+        self.ortho=""
+        self.ortho_u = ""
+        self.geoids = ""
+        self.geoids_m =""
+        self.trackd = ""
+        self.trackg_n = ""
+        self.trackg_deg = ""
+        self.trackg_deg_n = ""
+        self.speed_k = ""
+        self.speed_k_t = ""
+        self.gspeed = ""
+        self.gspeed_k = ""
+        self.vtgmode = ""
+        self.debug_gga = debug_gga
+        self.debug_vtg = debug_vtg
+        self.debug_gll = debug_gll
+        self.debug_gsv = debug_gsv
+        self.debug_gsa = debug_gsa
+        self.debug_rmc = debug_rmc
         self.readtime =  time.time()
         self.readdata = ""
         self.foundcode = ""
-        self.settime = settime
+
 
     @staticmethod
     def checksum(nmeaword):
-        linebegin = nmeaword.find(b'$')
+        linebegin = nmeaword.find(bytes(start_code, 'UTF-8'))
         cksumlenght = nmeaword.find(b'\r\n')
         cksumbegin = nmeaword.rfind(b'*')
         if linebegin == -1:
-            return "Not found"
+            return "Not found %s" %nmeaword.find(bytes(start_code, 'UTF-8'))
         if cksumbegin == -1:
-            return "Not found"
+            return "Not found %s" %nmeaword.rfind(b'*')
         if cksumlenght == -1:
-            return "Not found"
+            return "Not found %s" %nmeaword.find(b'\r\n')
         # to be XORed
         cksum = str(nmeaword[cksumbegin+1:cksumlenght].decode("utf-8"))   # cksum in nmeaword
         chksumdata = nmeaword[linebegin+1:cksumbegin].decode("utf-8")  # stripped nmeaword
@@ -85,7 +98,7 @@ class GPSModule:
             return "CRCError"
 
     @staticmethod
-    def convertToDegree(rawdegrees):
+    def convert_to_degree(rawdegrees):
         rawasfloat = float(rawdegrees)
         firstdigits = int(rawasfloat / 100)
         nexttwodigits = rawasfloat - float(firstdigits * 100)
@@ -95,11 +108,14 @@ class GPSModule:
 
     @staticmethod
     def findgpscode(stringin):
-        pos = stringin.find(start_code)
+        if len(stringin) < 9:
+            return "Too short"
+        pos = stringin.find(start_code+system_code)
         if pos == -1:
-            return "Not found"
+            return "Not found %s" %start_code+system_code
         else:
-            return stringin[pos+1:pos+6]
+            return stringin[pos+3:pos+6]
+
     async def reader(self):
         datain = ""
         port = asyncio.StreamReader(self.moduleUart)
@@ -112,7 +128,7 @@ class GPSModule:
         except ValueError:
             return False
         except False:
-            if self.debug is True:
+            if self.debug_gga is True:
                 print ("Bad formed")
             return False
         return start_code+self.readdata
@@ -131,19 +147,15 @@ class GPSModule:
                     self.foundcode =self.findgpscode(self.readdata)
                 except ValueError:
                     continue
-                if self.debug is True:
-                    for i in range (len(GPcodes)):
-                        if self.foundcode == GPcodes[i][0]:
-                            print("Code: %s = %s" % (self.foundcode, GPcodes[i][1]))
-                print(self.foundcode)
-                if self.foundcode == 'GPGGA':
+                if self.foundcode == 'GGA':
                     # 0 = Message ID $GPGGA
                     # 1=  UTC of position fix
                     # 2 = Latitude
                     # 3 = Direction of latitude: N: North, S: South
                     # 4 = Longitude
                     # 5 = Direction of longitude: E: East, W: West
-                    # 6 = GPS Quality indicator: 0: Fix not valid, 1: GPS fix, 2: Differential GPS fix (DGNSS), SBAS, OmniSTAR VBS, Beacon, RTX in GVBS mode, 3: Not applicable
+                    # 6 = GPS Quality indicator: 0: Fix not valid, 1: GPS fix, 2: Differential GPS fix (DGNSS), SBAS,
+                    #        OmniSTAR VBS, Beacon, RTX in GVBS mode, 3: Not applicable
                     #     4: RTK Fixed, xFill, 5: RTK Float, OmniSTAR XP/HP, Location RTK, RTX, 6: INS Dead reckoning
                     # 7 = Number of SVs in use, range from 00 through to 24+
                     # 8 = HDOP
@@ -152,26 +164,47 @@ class GPSModule:
                     # 11 = Geoid separation
                     # 12 = M: geoid separation measured in meters
                     # 13 = Age of differential GPS data record, Type 1 or Type 9. Null field when DGPS is not used.
-                    # 14 = Reference station ID, range 0000 to 4095. A null field when any reference station ID is selected and no corrections are received. See table below for a description of the field values.
-                    # 15 = The checksum data, always begins with *
+                    # 14 = Reference station ID, range 0000 to 4095. A null field when any reference
+                    #      station ID is selected and no corrections are received.
                     parts = self.readdata.split(',')
                     if len(parts) == 15:
                         try:
-                            self.latitude = self.convertToDegree(parts[2])
+                            self.latitude = self.convert_to_degree(parts[2])
                         except ValueError:
                             continue
-                        if (parts[3] == 'S'):
+                        if parts[3] == 'S':
                             self.latitude = "-" + self.latitude
                         try:
-                            self.longitude = self.convertToDegree(parts[4])
+                            self.longitude = self.convert_to_degree(parts[4])
                         except ValueError:
                             continue
-                        if (parts[5] == 'W'):
+                        if parts[5] == 'W':
                             self.longitude = "-" + self.longitude
+                        self.quality_indicator = parts[6]
                         self.satellites = parts[7]
-                        self.GPStime = parts[1][0:2] + ":" + parts[1][2:4] + ":" + parts[1][4:6]
-                        self.gps_fix_status = True
-                if self.foundcode == 'GPVTG':
+                        self.gpstime = parts[1][0:2] + ":" + parts[1][2:4] + ":" + parts[1][4:6]
+                        self.hdop = parts[8]
+                        self.ortho = parts[9]
+                        self.ortho_u = parts[10]
+                        self.geoids = parts[11]
+                        self.geoids_m = parts[12]
+                        if int(self.quality_indicator) == 1 or int(self.quality_indicator) ==2:
+                            self.gps_fix_status = True
+                        else:
+                            self.gps_fix_status = False
+                        if self.debug_gga is True:
+                            print("--- Debug GGA ---")
+                            print("Latitude: %s" % self.latitude )
+                            print("Longitude: %s" % self.longitude)
+                            print("Satellites: %s" % self.satellites)
+                            print("Time: %s" % self.gpstime)
+                            print("Fix: %s" % self.gps_fix_status)
+                            print("Quality indicator: %s" %self.quality_indicator)
+                            print("Horizontal Dilution of Precision: %s" % self.hdop)
+                            print("Orthometric height %s %s:" % (self.ortho, self.ortho_u))
+                            print("Height of geoid above WGS84 ellipsoid: %s %s" % (self.geoids, self.geoids_m))
+                            print("--- end of GGA ---")
+                if self.foundcode == 'VTG':
                     # 0 = Message ID $GPVTG
                     # 1 = Track made good (degrees true)
                     # 2 = T: track made good is relative to true north
@@ -181,13 +214,33 @@ class GPSModule:
                     # 6 = N: speed is measured in knots
                     # 7 = Speed over ground in kilometers/hour (kph)
                     # 8 = K: speed over ground is measured in kph
-                    # 9 = Mode indicator: A: Autonomous mode,  D: Differential mode, E: Estimated (dead reckoning) mode,  M: Manual Input mode, S: Simulator mode, N: Data not valid
-                    # 10 = The checksum data, always begins with *
+                    # 9 = Mode indicator: A: Autonomous mode,  D: Differential mode, E: Estimated (dead reckoning) mode,
+                    #     M: Manual Input mode, S: Simulator mode, N: Data not valid
                     parts = self.readdata.split(',')
-                    if self.debug is True:
-                        print("GPVTG: %s" %parts)
-                        print("---")
-                if self.foundcode == 'GPGLL':
+                    if len(parts) == 10:
+                        self.trackd = parts[1]
+                        self.trackg_n = parts[2]
+                        self.trackg_deg = parts[3]
+                        self.trackg_deg_n = parts[4]
+                        self.speed_k = parts[5]
+                        self.speed_k_t = parts[6]
+                        self.gspeed = parts[7]
+                        self.gspeed_k = parts[8]
+                        self.vtgmode = parts[9]
+                        if self.debug_vtg is True:
+                            print("--- VTG debug --- ")
+                            print("Track made good (degrees true): %s" % self.trackd)
+                            print("T: track made good is relative to true north: %s:" % self.trackg_n)
+                            print("Track made good (degrees magnetic): %s" % self.trackg_deg)
+                            print("M: track made good is relative to magnetic north: %s" % self.trackg_deg_n)
+                            print("Speed, in knots: %s" % self.speed_k)
+                            print("N: speed is measured in knots: %s" % self.speed_k_t)
+                            print("Speed over ground in kilometers/hour (kph): %s" % self.gspeed)
+                            print("K: speed over ground is measured in kph: %s" % self.gspeed_k)
+                            print("Mode indicator: %s" % self.vtgmode)
+                            print("--- end of VTG ---")
+
+                if self.foundcode == 'GLL':
                     # 0 = Message ID $GPGLL, 1 = Latitude in dd mm,mmmm format (0-7 decimal places)
                     # 2 = Direction of latitude N: North S: South
                     # 3 = Longitude in ddd mm,mmmm format (0-7 decimal places)
@@ -204,35 +257,35 @@ class GPSModule:
                     # S: Simulator mode
                     # N: Data not valid
                     parts = self.readdata.split(',')
-                    if self.debug is True:
-                        print("GPGLL parts: %s" %parts)
-                        print("---")
-                if self.foundcode == 'GPGSV':
+                    if len(parts) == 7:
+                        if self.debug_gll is True:
+                            print("--- GLL not implemented ---")
+                if self.foundcode == 'GSV':
                     # NMEA-0183 message:
                     # 1 = Total number of messages of this type in this cycle,2 = Message number,
                     # 3 = Total number of SVs in view
                     # 4 = SV PRN number, 5= Elevation in degrees, 90 maximum, 6 = Azimuth, dg from true north
                     # 7 = SNR, 00-99 dB,8-19 = Information about SVs'
                     parts = self.readdata.split(',')
-                    if self.debug is True:
-                        print("GPGSV parts %s: " %parts)
-                        print("---")
-                if self.foundcode == 'GPGSA':
+                    if len(parts) == 7:
+                        if self.debug_gsv is True:
+                            print("--- GSV not implemented ---")
+                if self.foundcode == 'GSA':
                     # 1= Mode:M=Manual, forced to operate in 2D or 3D, A=Automatic, 3D/2D
                     # 2= Mode: 1=Fix not available, 2=2Dm 3=3D
                     # 3-6 = IDs of SVs, PDOP,HDOP and VDOP
                     # 7 = The checksum data, always begins with * (NMEA-0183 version 4.10 GPS/GLonass etc)
                     parts = self.readdata.split(',')
-                    if self.debug is True:
-                        print("GPGSA: %s" % parts)
-                        print("---")
-                if self.foundcode == 'GPRMC':
+                    if len(parts) == 7:
+                        if self.debug_gsa is True:
+                            print("--- GSA not implemented ---")
+                if self.foundcode == 'RMC':
                     # 1 = UTC of position fix, 2= Status A=active or V=void,3 = Latitude
                     # 4 = Longitude, 5 = Speed over the ground in knots, 6 = Track angle in degrees (True)
                     # 7 = Date, 8= Magnetic variation, in degrees
                     # 9 = The checksum data, always begins with *
                     parts = self.readdata.split(',')
-                    if self.debug is True:
-                        print("GPRMC: %s" %parts)
-                        print("---")
+                    if len(parts) == 9:
+                        if self.debug_rmc is True:
+                            print("--- RMC not implemented ---")
             await asyncio.sleep_ms(100)

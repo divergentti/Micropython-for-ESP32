@@ -3,6 +3,7 @@
 
   For asyncronous StreamReader by Divergentti / Jari Hiltunen
   Add loop into your code loop.create_task(objectname.read_async_loop())
+  Tested UBX-G60xx ROM CORE 6.02 (36023) Oct 15 2009
   NEO-6M datasheet https://content.u-blox.com/sites/default/files/products/documents/NEO-6_DataSheet_%28GPS.G6-HW-09005%29.pdf
 
   Time-To-First-Fix 26 seconds after cold start, 1 seconds warm start
@@ -274,6 +275,7 @@ class GPSModule:
                 if (time.time() - self.readtime) > self.timeout:
                     self.moduleUart.init()
                     if self.debug_gen is True:
-                        print("Timed out, new UART init!")
+                        print("Timed out, UART init!")
+                    self.moduleUart.init()
                 gc.collect()
             await asyncio.sleep_ms(25)

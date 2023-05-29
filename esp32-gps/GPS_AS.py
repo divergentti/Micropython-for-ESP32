@@ -1,7 +1,7 @@
 """
-  29.05.2023: Jari Hiltunen, verion 0.1
+  29.05.2023: Jari Hiltunen, version 0.1
 
-  For asyncronous StreamReader by Divergentti / Jari Hiltunen
+  For asynchronous StreamReader by Divergentti / Jari Hiltunen
   Add loop into your code loop.create_task(objectname.read_async_loop())
   Tested UBX-G60xx ROM CORE 6.02 (36023) Oct 15 2009
   NEO-6M datasheet https://content.u-blox.com/sites/default/files/products/documents/NEO-6_DataSheet_%28GPS.G6-HW-09005%29.pdf
@@ -16,7 +16,6 @@
     BD or GB - Beidou,GA - Galileo, GL - GLONASS.
 
   Usage:
-        # If needed, add debug= three letter NMEA code in driver (GGA/VTG/GLL/GSV/GSA/RMC)
         import drivers.GPS_AS as GPS
         gps1 = GPS.GPSModule(rxpin=16, txpin=17, uart=2, interval = 3)
 
@@ -32,6 +31,16 @@
             asyncio.run(main())
         except MemoryError:
             reset()
+
+    For debugging: debug_gen=False, debug_gga = False, debug_vtg = False, debug_gll = False, debug_gsv=False,
+        debug_gsa=False, debug_rmc = False
+     - debug_gen is about general read etc
+    - debug_gga Global Positioning System Fix Data
+    - debug_vtg Track Made Good and Ground Speed
+    - debug_gll Geographic Position, Latitude/Longitude
+    - debug_gsv GPS Satellites in view
+    - debug_gsa GPS DOP and active satellites
+    - debug_rmc = Recommended minimum specific GPS/Transit data 
 
 """
 

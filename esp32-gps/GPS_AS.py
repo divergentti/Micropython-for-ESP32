@@ -17,6 +17,7 @@
 
   Usage:
         # If needed, add debug= three letter NMEA code in driver (GGA/VTG/GLL/GSV/GSA/RMC)
+        import drivers.GPS_AS as GPS
         gps1 = GPS.GPSModule(rxpin=16, txpin=17, uart=2, interval = 3)
 
         .. your async code, which access values of the gps1 object, such as gps1.gpstime ...
@@ -90,11 +91,11 @@ class GPSModule:
         cksumlenght = nmeaword.find(b'\r\n')
         cksumbegin = nmeaword.rfind(b'*')
         if linebegin == -1:
-            return "Not found %s" %nmeaword.find(bytes(start_code, 'UTF-8'))
+            return "Not found line begin"
         if cksumbegin == -1:
-            return "Not found %s" %nmeaword.rfind(b'*')
+            return "Not found checksum begin"
         if cksumlenght == -1:
-            return "Not found %s" %nmeaword.find(b'\r\n')
+            return "Not found checksum length"
         # to be XORed
         cksum = str(nmeaword[cksumbegin+1:cksumlenght].decode("utf-8"))   # cksum in nmeaword
         chksumdata = nmeaword[linebegin+1:cksumbegin].decode("utf-8")  # stripped nmeaword

@@ -1,16 +1,20 @@
 """
-  29.05.2023: Jari Hiltunen, version 0.1
+  30.05.2023: Jari Hiltunen, version 0.2
+  - added system date and time set from satellite using GPRMC (if constructor self_settime = True)
 
   For asynchronous StreamReader by Divergentti / Jari Hiltunen
   Add loop into your code loop.create_task(objectname.read_async_loop())
   Tested UBX-G60xx ROM CORE 6.02 (36023) Oct 15 2009
   NEO-6M datasheet https://content.u-blox.com/sites/default/files/products/documents/NEO-6_DataSheet_%28GPS.G6-HW-09005%29.pdf
+  u-blox 6 Receiver Description Including Protocol Specification:
+  https://content.u-blox.com/sites/default/files/products/documents/u-blox6_ReceiverDescrProtSpec_%28GPS.G6-SW-10018%29_Public.pdf
 
   Time-To-First-Fix 26 seconds after cold start, 1 seconds warm start
   Maximum update rate 5 Hz
   Accuracy 2.5 meters
 
   Protocol: NMEA including GSV, RMC, GSA, GGA, GLL, VTG, TXT
+  NMEA codes at https://www.nmea.org/
 
     GP = for GPS codes
     BD or GB - Beidou,GA - Galileo, GL - GLONASS.
@@ -32,35 +36,39 @@
         except MemoryError:
             reset()
 
-    For debugging: debug_gen=False, debug_gga = False, debug_vtg = False, debug_gll = False, debug_gsv=False,
-        debug_gsa=False, debug_rmc = False
-     - debug_gen is about general read etc
+    For debugging:
+    - debug_gen is about general read etc
     - debug_gga Global Positioning System Fix Data
     - debug_vtg Track Made Good and Ground Speed
     - debug_gll Geographic Position, Latitude/Longitude
     - debug_gsv GPS Satellites in view
     - debug_gsa GPS DOP and active satellites
-    - debug_rmc = Recommended minimum specific GPS/Transit data 
+    - debug_rmc = Recommended minimum specific GPS/Transit data
+
+    Setting system time is done via GPRMC receive. During object init default is set_time = True
+    Important! self.gpstime is read from GGA! Do not use that value for setting time, because it may be not corret
 
 """
 
-from machine import UART
+from machine import UART, RTC
 import time
 import uasyncio as asyncio
 import gc
 
+rtc_clock = RTC()
 start_code = '$'
 system_code = 'GP'
 
 class GPSModule:
     #  Default UART2, rx=9, tx=10, readinterval = 1 seconds. Avoid UART1.
-    def __init__(self, rxpin=16, txpin=17, uart=2, interval=1, timeout = 60, debug_gen=False,
+    def __init__(self, rxpin=16, txpin=17, uart=2, interval=1, timeout = 60, set_time= True, debug_gen=False,
                  debug_gga = False, debug_vtg = False, debug_gll = False, debug_gsv=False,
                  debug_gsa=False, debug_rmc = False):
         self.moduleUart = UART(uart, 9600, 8, None, 1, rx=rxpin, tx=txpin)
         self.moduleUart.init()
         self.read_interval = interval
         self.timeout = timeout
+        self.set_time = set_time
         self.gps_fix_status = False
         self.latitude = ""
         self.longitude = ""
@@ -81,6 +89,10 @@ class GPSModule:
         self.gspeed = ""
         self.gspeed_k = ""
         self.vtgmode = ""
+        self.data_valid = False
+        self.spd_o_g = ""
+        self.course_o_g = ""
+        self.ddmmyy = ""
         self.debug_gen = debug_gen
         self.debug_gga = debug_gga
         self.debug_vtg = debug_vtg
@@ -91,8 +103,6 @@ class GPSModule:
         self.readtime =  time.time()
         self.readdata = ""
         self.foundcode = ""
-
-
 
     @staticmethod
     def checksum(nmeaword):
@@ -145,8 +155,6 @@ class GPSModule:
             self.readdata = self.checksum(datain)
         except ValueError as error:
             return "Reader error: %s" %error
-        except False:
-            return "Reader: Bad formed"
         if self.debug_gen is True:
             print("Data read: %s" %self.readdata)
         self.readtime = time.time()
@@ -193,10 +201,10 @@ class GPSModule:
                         self.ortho_u = parts[10]
                         self.geoids = parts[11]
                         self.geoids_m = parts[12]
-                        if int(self.quality_indicator) == 1 or int(self.quality_indicator) ==2:
-                            self.gps_fix_status = True
-                        else:
+                        if int(self.quality_indicator) == 0:
                             self.gps_fix_status = False
+                        else:
+                            self.gps_fix_status = True
                         if self.debug_gga is True:
                             print("--- Debug GGA ---")
                             print("Latitude: %s" % self.latitude )
@@ -279,13 +287,41 @@ class GPSModule:
                     # 7 = Date, 8= Magnetic variation, in degrees
                     # 9 = The checksum data, always begins with *
                     parts = self.readdata.split(',')
-                    if len(parts) == 9:
+                    if len(parts) == 13:
+                        gpstime_h = int(parts[1][0:2])
+                        gpstime_m = int(parts[1][2:4])
+                        gpstime_s = int(parts[1][4:6])
+                        if parts[2] =='V':
+                            self.data_valid = False
+                        if parts[2] == 'A':
+                            self.data_valid = True
+                        try:
+                            self.latitude = self.convert_to_degree(parts[3])
+                        except ValueError:
+                            continue
+                        if parts[4] == 'S':
+                            self.latitude = "-" + self.latitude
+                        try:
+                            self.longitude = self.convert_to_degree(parts[5])
+                        except ValueError:
+                            continue
+                        if parts[6] == 'W':
+                            self.longitude = "-" + self.longitude
+                        self.spd_o_g = parts[7]
+                        self.course_o_g = parts[8]
+                        self.ddmmyy = str(parts[9])
+                        if self.set_time is True and self.data_valid is True:
+                            year = int('20'+ self.ddmmyy[4:6])
+                            month = int(self.ddmmyy[2:4])
+                            date = int(self.ddmmyy[0:2])
+                            rtc_clock.datetime([year,month,date, gpstime_h, gpstime_m,gpstime_s,0,0])
                         if self.debug_rmc is True:
-                            print("--- RMC not implemented ---")
-                if (time.time() - self.readtime) > self.timeout:
-                    self.moduleUart.init()
-                    if self.debug_gen is True:
-                        print("Timed out, UART init!")
-                    self.moduleUart.init()
+                            print("--- RMC debug ---")
+                            print("GPSTime: %s" % self.gpstime)
+                            print("System time set: ", time.localtime())
+                            print("Data valid %s:" %self.data_valid)
+                            print("Speed over ground: %s" %self.spd_o_g)
+                            print("Course over ground: %s" %self.course_o_g)
+                            print("--- End of RMC ---")
                 gc.collect()
             await asyncio.sleep_ms(25)

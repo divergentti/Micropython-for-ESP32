@@ -46,8 +46,9 @@
     - debug_rmc = Recommended minimum specific GPS/Transit data
 
     Setting system time is done via GPRMC receive. During object init default is set_time = True
-    Important! self.gpstime is read from GGA! Do not use that value for setting time, because it may be not corret
-
+    Important!
+        - self.gpstime is read from GGA! Do not use that value for setting time, because it may be not correct!
+        - weekday number is not updated unless it is set before object init!
 """
 
 from machine import UART, RTC
@@ -282,10 +283,6 @@ class GPSModule:
                         if self.debug_gsa is True:
                             print("--- GSA not implemented ---")
                 if self.foundcode == 'RMC':
-                    # 1 = UTC of position fix, 2= Status A=active or V=void,3 = Latitude
-                    # 4 = Longitude, 5 = Speed over the ground in knots, 6 = Track angle in degrees (True)
-                    # 7 = Date, 8= Magnetic variation, in degrees
-                    # 9 = The checksum data, always begins with *
                     parts = self.readdata.split(',')
                     if len(parts) == 13:
                         gpstime_h = int(parts[1][0:2])
@@ -314,7 +311,10 @@ class GPSModule:
                             year = int('20'+ self.ddmmyy[4:6])
                             month = int(self.ddmmyy[2:4])
                             date = int(self.ddmmyy[0:2])
-                            rtc_clock.datetime([year,month,date, gpstime_h, gpstime_m,gpstime_s,0,0])
+                            locatimenow = time.localtime()
+                            weekday = int(locatimenow[6])
+                            print(year,month,date,gpstime_h,gpstime_m,gpstime_s)
+                            rtc_clock.datetime((year,month,date, weekday, gpstime_h, gpstime_m, gpstime_s,0))
                         if self.debug_rmc is True:
                             print("--- RMC debug ---")
                             print("GPSTime: %s" % self.gpstime)

@@ -313,7 +313,6 @@ class GPSModule:
                             date = int(self.ddmmyy[0:2])
                             locatimenow = time.localtime()
                             weekday = int(locatimenow[6])
-                            print(year,month,date,gpstime_h,gpstime_m,gpstime_s)
                             rtc_clock.datetime((year,month,date, weekday, gpstime_h, gpstime_m, gpstime_s,0))
                         if self.debug_rmc is True:
                             print("--- RMC debug ---")

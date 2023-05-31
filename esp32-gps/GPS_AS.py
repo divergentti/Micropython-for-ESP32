@@ -38,6 +38,7 @@
 
     Important note!
         - self.gpstime is read from GGA! Do not use setting system time, because it is not updated frequently!
+        - longitude and latitude is set from GGA, not from RMC
 """
 
 from machine import UART, RTC
@@ -140,21 +141,23 @@ class GPSModule:
         except MemoryError:
             gc.collect()
             return False
-        if self.checksum(datain) is True:
+        try:
+            self.checksum(datain)
+        except ValueError:
+            return False
+        finally:
             self.readdata = datain
             self.readtime = time.time()
             pos = datain.find(bytes(start_code + system_code,'UTF-8'))
             if pos == -1:
                 return False
             else:
+                if self.debug_gen is True:
+                    print("Found code: %s and read data is: %s" % (self.foundcode, self.readdata))
                 self.foundcode = datain[pos + 3: pos + 6]  # returns 3 letter GP-xxx code
                 decoded_data = str(self.readdata.decode('utf-8'))
                 self.readdata = decoded_data.split(',')
-            if self.debug_gen is True:
-                print("Found code: %s and read data is: %s" %(self.foundcode, self.readdata))
-            return True
-        else:
-            return False
+                return True
 
     async def read_async_loop(self):
         # Forever running loop initiated from the main
@@ -246,12 +249,6 @@ class GPSModule:
                         self.data_valid = False
                     if self.readdata[2] == 'A':
                         self.data_valid = True
-                    self.latitude = self.convert_to_degree(self.readdata[3])
-                    if self.readdata[4] == 'S':
-                        self.latitude = "-" + self.latitude
-                    self.longitude = self.convert_to_degree(self.readdata[5])
-                    if self.readdata[6] == 'W':
-                        self.longitude = "-" + self.longitude
                     self.spd_o_g = self.readdata[7]
                     self.course_o_g = self.readdata[8]
                     self.ddmmyy = self.readdata[9]

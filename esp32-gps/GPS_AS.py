@@ -8,6 +8,7 @@
   - 30.5.2023: added system date and time set from satellite using GPRMC (if constructor self_settime = True)
   - 30.5.2023: reworked the reader part
   - 31.5.2023: added weekday calculation for setting system time from satellite
+  - 31.5.2023: code test ongoing ... 
 
   Tested: ESP32 with esp32-ota-20230426-v1.20.0.bin micropython & OLED display & BME680 & Neo6M GPS module
   Neo 6M module: UBX-G60xx ROM CORE 6.02 (36023) Oct 15 2009 (Datasheets and Receiver Description available)
@@ -131,7 +132,7 @@ class GPSModule:
         return str(converted)
 
 
-    @property async def reader(self):
+    async def reader(self):
         # Reads the UART port via StreamReader and check validity of the NMEA message.
         # Catch NMEA 0183 protocol message header, such as GPGGA, GPRMC etc. without GP (system code)
         # Keeps byte coding.
@@ -144,6 +145,8 @@ class GPSModule:
         try:
             self.checksum(datain)
         except ValueError:
+            return False
+        except False:
             return False
         self.readdata = datain
         self.readtime = time.time()
@@ -163,7 +166,7 @@ class GPSModule:
 
         while True:
             if (time.time() - self.readtime) >= self.read_interval:
-                await self.reader
+                await self.reader()
                 if self.foundcode == b'GGA' and len(self.readdata) == 15:
                     self.latitude = self.convert_to_degree(self.readdata[2])
                     if self.readdata[3] == 'S':

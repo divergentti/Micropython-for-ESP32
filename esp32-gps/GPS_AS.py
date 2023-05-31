@@ -162,130 +162,112 @@ class GPSModule:
         while True:
             if (time.time() - self.readtime) >= self.read_interval:
                 await self.reader()
-                if self.foundcode == b'GGA':
-                    if len(self.readdata) == 15:
-                        try:
-                            self.latitude = self.convert_to_degree(self.readdata[2])
-                        except ValueError:
-                            continue
-                        if self.readdata[3] == 'S':
-                            self.latitude = "-" + self.latitude
-                        try:
-                            self.longitude = self.convert_to_degree(self.readdata[4])
-                        except ValueError:
-                            continue
-                        if self.readdata[5] == 'W':
-                            self.longitude = "-" + self.longitude
-                        self.quality_indicator = self.readdata[6]
-                        self.satellites = self.readdata[7]
-                        self.gpstime = self.readdata[1][0:2] + ":" + self.readdata[1][2:4] + ":" + self.readdata[1][4:6]
-                        self.hdop = self.readdata[8]
-                        self.ortho = self.readdata[9]
-                        self.ortho_u = self.readdata[10]
-                        self.geoids = self.readdata[11]
-                        self.geoids_m = self.readdata[12]
-                        if int(self.quality_indicator) == 0:
-                            self.gps_fix_status = False
-                        else:
-                            self.gps_fix_status = True
-                        if self.debug_gga is True:
-                            print("--- Debug GGA ---")
-                            print("Latitude: %s" % self.latitude )
-                            print("Longitude: %s" % self.longitude)
-                            print("Satellites: %s" % self.satellites)
-                            print("Time: %s" % self.gpstime)
-                            print("Fix: %s" % self.gps_fix_status)
-                            print("Quality indicator: %s" %self.quality_indicator)
-                            print("Horizontal Dilution of Precision: %s" % self.hdop)
-                            print("Orthometric height %s %s:" % (self.ortho, self.ortho_u))
-                            print("Height of geoid above WGS84 ellipsoid: %s %s" % (self.geoids, self.geoids_m))
-                            print("--- end of GGA ---")
-                if self.foundcode == b'VTG':
-                    if len(self.readdata) == 10:
-                        self.trackd = self.readdata[1]
-                        self.trackg_n = self.readdata[2]
-                        self.trackg_deg = self.readdata[3]
-                        self.trackg_deg_n = self.readdata[4]
-                        self.speed_k = self.readdata[5]
-                        self.speed_k_t = self.readdata[6]
-                        self.gspeed = self.readdata[7]
-                        self.gspeed_k = self.readdata[8]
-                        self.vtgmode = self.readdata[9]
-                        if self.debug_vtg is True:
-                            print("--- VTG debug --- ")
-                            print("Track made good (degrees true): %s" % self.trackd)
-                            print("T: track made good is relative to true north: %s:" % self.trackg_n)
-                            print("Track made good (degrees magnetic): %s" % self.trackg_deg)
-                            print("M: track made good is relative to magnetic north: %s" % self.trackg_deg_n)
-                            print("Speed, in knots: %s" % self.speed_k)
-                            print("N: speed is measured in knots: %s" % self.speed_k_t)
-                            print("Speed over ground in kilometers/hour (kph): %s" % self.gspeed)
-                            print("K: speed over ground is measured in kph: %s" % self.gspeed_k)
-                            print("Mode indicator: %s" % self.vtgmode)
-                            print("--- end of VTG ---")
-                if self.foundcode == b'GLL':
+                if self.foundcode == b'GGA' and len(self.readdata) == 15:
+                    self.latitude = self.convert_to_degree(self.readdata[2])
+                    if self.readdata[3] == 'S':
+                        self.latitude = "-" + self.latitude
+                    self.longitude = self.convert_to_degree(self.readdata[4])
+                    if self.readdata[5] == 'W':
+                        self.longitude = "-" + self.longitude
+                    self.quality_indicator = self.readdata[6]
+                    self.satellites = self.readdata[7]
+                    self.gpstime = self.readdata[1][0:2] + ":" + self.readdata[1][2:4] + ":" + self.readdata[1][4:6]
+                    self.hdop = self.readdata[8]
+                    self.ortho = self.readdata[9]
+                    self.ortho_u = self.readdata[10]
+                    self.geoids = self.readdata[11]
+                    self.geoids_m = self.readdata[12]
+                    if int(self.quality_indicator) == 0:
+                        self.gps_fix_status = False
+                    else:
+                        self.gps_fix_status = True
+                    if self.debug_gga is True:
+                        print("--- Debug GGA ---")
+                        print("Latitude: %s" % self.latitude )
+                        print("Longitude: %s" % self.longitude)
+                        print("Satellites: %s" % self.satellites)
+                        print("Time: %s" % self.gpstime)
+                        print("Fix: %s" % self.gps_fix_status)
+                        print("Quality indicator: %s" %self.quality_indicator)
+                        print("Horizontal Dilution of Precision: %s" % self.hdop)
+                        print("Orthometric height %s %s:" % (self.ortho, self.ortho_u))
+                        print("Height of geoid above WGS84 ellipsoid: %s %s" % (self.geoids, self.geoids_m))
+                        print("--- end of GGA ---")
+                if self.foundcode == b'VTG' and len(self.readdata) == 10:
+                    self.trackd = self.readdata[1]
+                    self.trackg_n = self.readdata[2]
+                    self.trackg_deg = self.readdata[3]
+                    self.trackg_deg_n = self.readdata[4]
+                    self.speed_k = self.readdata[5]
+                    self.speed_k_t = self.readdata[6]
+                    self.gspeed = self.readdata[7]
+                    self.gspeed_k = self.readdata[8]
+                    self.vtgmode = self.readdata[9]
+                    if self.debug_vtg is True:
+                        print("--- VTG debug --- ")
+                        print("Track made good (degrees true): %s" % self.trackd)
+                        print("T: track made good is relative to true north: %s:" % self.trackg_n)
+                        print("Track made good (degrees magnetic): %s" % self.trackg_deg)
+                        print("M: track made good is relative to magnetic north: %s" % self.trackg_deg_n)
+                        print("Speed, in knots: %s" % self.speed_k)
+                        print("N: speed is measured in knots: %s" % self.speed_k_t)
+                        print("Speed over ground in kilometers/hour (kph): %s" % self.gspeed)
+                        print("K: speed over ground is measured in kph: %s" % self.gspeed_k)
+                        print("Mode indicator: %s" % self.vtgmode)
+                        print("--- end of VTG ---")
+                if self.foundcode == b'GLL' and len(self.readdata) == 7:
                     # 0 = Message ID $GPGLL, 1 = Latitude in dd mm,mmmm format (0-7 decimal places)
                     # 2 = Direction of latitude N: North S: South
                     # 3 = Longitude in ddd mm,mmmm format (0-7 decimal places)
                     # 4 = Direction of longitude E: East W: West
                     # 5 = UTC of position in hhmmss.ss format
                     # 6 = Status indicator: A: Data valid, V: Data not valid
-                    if len(self.readdata) == 7:
-                        if self.debug_gll is True:
-                            print("--- GLL not implemented ---")
-                if self.foundcode == b'GSV':
+                    if self.debug_gll is True:
+                        print("--- GLL not implemented ---")
+                if self.foundcode == b'GSV' and len(self.readdata) == 7:
                     # NMEA-0183 message:
                     # 1 = Total number of messages of this type in this cycle,2 = Message number,
                     # 3 = Total number of SVs in view
                     # 4 = SV PRN number, 5= Elevation in degrees, 90 maximum, 6 = Azimuth, dg from true north
                     # 7 = SNR, 00-99 dB,8-19 = Information about SVs'
-                    if len(self.readdata) == 7:
-                        if self.debug_gsv is True:
-                            print("--- GSV not implemented ---")
-                if self.foundcode == b'GSA':
+                    if self.debug_gsv is True:
+                        print("--- GSV not implemented ---")
+                if self.foundcode == b'GSA' and len(self.readdata) == 7:
                     # 1= Mode:M=Manual, forced to operate in 2D or 3D, A=Automatic, 3D/2D
                     # 2= Mode: 1=Fix not available, 2=2Dm 3=3D
                     # 3-6 = IDs of SVs, PDOP,HDOP and VDOP
-                    if len(self.readdata) == 7:
-                        if self.debug_gsa is True:
-                            print("--- GSA not implemented ---")
-                if self.foundcode == b'RMC':
-                    if len(self.readdata) == 13:
-                        gpstime_h = int(self.readdata[1][0:2])
-                        gpstime_m = int(self.readdata[1][2:4])
-                        gpstime_s = int(self.readdata[1][4:6])
-                        if self.readdata[2] =='V':
-                            self.data_valid = False
-                        if self.readdata[2] == 'A':
-                            self.data_valid = True
-                        try:
-                            self.latitude = self.convert_to_degree(self.readdata[3])
-                        except ValueError:
-                            continue
-                        if self.readdata[4] == 'S':
-                            self.latitude = "-" + self.latitude
-                        try:
-                            self.longitude = self.convert_to_degree(self.readdata[5])
-                        except ValueError:
-                            continue
-                        if self.readdata[6] == 'W':
-                            self.longitude = "-" + self.longitude
-                        self.spd_o_g = self.readdata[7]
-                        self.course_o_g = self.readdata[8]
-                        self.ddmmyy = self.readdata[9]
-                        if self.set_time is True and self.data_valid is True:
-                            year = int('20'+ self.ddmmyy[4:6])
-                            month = int(self.ddmmyy[2:4])
-                            date = int(self.ddmmyy[0:2])
-                            weekday = self.weekday(year, month, date)
-                            # Set system time!
-                            rtc_clock.datetime((year,month,date, weekday, gpstime_h, gpstime_m, gpstime_s,0))
-                        if self.debug_rmc is True:
-                            print("--- RMC debug ---")
-                            print("GPSTime: %s" % self.gpstime)
-                            print("System time set: ", time.localtime())
-                            print("Data valid %s:" %self.data_valid)
-                            print("Speed over ground: %s" %self.spd_o_g)
-                            print("Course over ground: %s" %self.course_o_g)
-                            print("--- End of RMC ---")
+                    if self.debug_gsa is True:
+                        print("--- GSA not implemented ---")
+                if self.foundcode == b'RMC' and len(self.readdata) == 13:
+                    gpstime_h = int(self.readdata[1][0:2])
+                    gpstime_m = int(self.readdata[1][2:4])
+                    gpstime_s = int(self.readdata[1][4:6])
+                    if self.readdata[2] =='V':
+                        self.data_valid = False
+                    if self.readdata[2] == 'A':
+                        self.data_valid = True
+                    self.latitude = self.convert_to_degree(self.readdata[3])
+                    if self.readdata[4] == 'S':
+                        self.latitude = "-" + self.latitude
+                    self.longitude = self.convert_to_degree(self.readdata[5])
+                    if self.readdata[6] == 'W':
+                        self.longitude = "-" + self.longitude
+                    self.spd_o_g = self.readdata[7]
+                    self.course_o_g = self.readdata[8]
+                    self.ddmmyy = self.readdata[9]
+                    if self.set_time is True and self.data_valid is True:
+                        year = int('20'+ self.ddmmyy[4:6])
+                        month = int(self.ddmmyy[2:4])
+                        date = int(self.ddmmyy[0:2])
+                        weekday = self.weekday(year, month, date)
+                        # Set system time!
+                        rtc_clock.datetime((year,month,date, weekday, gpstime_h, gpstime_m, gpstime_s,0))
+                    if self.debug_rmc is True:
+                        print("--- RMC debug ---")
+                        print("GPSTime: %s" % self.gpstime)
+                        print("System time set: ", time.localtime())
+                        print("Data valid %s:" %self.data_valid)
+                        print("Speed over ground: %s" %self.spd_o_g)
+                        print("Course over ground: %s" %self.course_o_g)
+                        print("--- End of RMC ---")
             await asyncio.sleep_ms(25)

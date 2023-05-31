@@ -145,6 +145,8 @@ class GPSModule:
             self.checksum(datain)
         except ValueError:
             return False
+        except False:
+            return False
         finally:
             self.readdata = datain
             self.readtime = time.time()

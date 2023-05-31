@@ -145,21 +145,18 @@ class GPSModule:
             self.checksum(datain)
         except ValueError:
             return False
-        except False:
+        self.readdata = datain
+        self.readtime = time.time()
+        pos = datain.find(bytes(start_code + system_code,'UTF-8'))
+        if pos == -1:
             return False
-        finally:
-            self.readdata = datain
-            self.readtime = time.time()
-            pos = datain.find(bytes(start_code + system_code,'UTF-8'))
-            if pos == -1:
-                return False
-            else:
-                if self.debug_gen is True:
-                    print("Found code: %s and read data is: %s" % (self.foundcode, self.readdata))
-                self.foundcode = datain[pos + 3: pos + 6]  # returns 3 letter GP-xxx code
-                decoded_data = str(self.readdata.decode('utf-8'))
-                self.readdata = decoded_data.split(',')
-                return True
+        else:
+            if self.debug_gen is True:
+                print("Found code: %s and read data is: %s" % (self.foundcode, self.readdata))
+            self.foundcode = datain[pos + 3: pos + 6]  # returns 3 letter GP-xxx code
+            decoded_data = str(self.readdata.decode('utf-8'))
+            self.readdata = decoded_data.split(',')
+            return True
 
     async def read_async_loop(self):
         # Forever running loop initiated from the main

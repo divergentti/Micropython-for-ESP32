@@ -8,7 +8,7 @@
   - 30.5.2023: added system date and time set from satellite using GPRMC (if constructor self_settime = True)
   - 30.5.2023: reworked the reader part
   - 31.5.2023: added weekday calculation for setting system time from satellite
-  - 31.5.2023: code test ongoing ...
+  - 31.5.2023: added try: except: for value errors, code test ongoing ...
 
   Tested: ESP32 with esp32-ota-20230426-v1.20.0.bin micropython & OLED display & BME680 & Neo6M GPS module
   Neo 6M module: UBX-G60xx ROM CORE 6.02 (36023) Oct 15 2009 (Datasheets and Receiver Description available)
@@ -158,6 +158,7 @@ class GPSModule:
                     return True
         except ValueError:
             return False
+        return False
 
 
     async def read_async_loop(self):
@@ -167,10 +168,16 @@ class GPSModule:
             if (time.time() - self.readtime) >= self.read_interval:
                 await self.reader()
                 if self.foundcode == b'GGA' and len(self.readdata) == 15:
-                    self.latitude = self.convert_to_degree(self.readdata[2])
+                    try:
+                        self.latitude = self.convert_to_degree(self.readdata[2])
+                    except ValueError:
+                        continue
                     if self.readdata[3] == 'S':
                         self.latitude = "-" + self.latitude
-                    self.longitude = self.convert_to_degree(self.readdata[4])
+                    try:
+                        self.longitude = self.convert_to_degree(self.readdata[4])
+                    except ValueError:
+                        continue
                     if self.readdata[5] == 'W':
                         self.longitude = "-" + self.longitude
                     self.quality_indicator = self.readdata[6]
@@ -243,9 +250,18 @@ class GPSModule:
                     if self.debug_gsa is True:
                         print("--- GSA not implemented ---")
                 if self.foundcode == b'RMC' and len(self.readdata) == 13:
-                    gpstime_h = int(self.readdata[1][0:2])
-                    gpstime_m = int(self.readdata[1][2:4])
-                    gpstime_s = int(self.readdata[1][4:6])
+                    try:
+                        gpstime_h = int(self.readdata[1][0:2])
+                    except ValueError:
+                        continue
+                    try:
+                        gpstime_m = int(self.readdata[1][2:4])
+                    except ValueError:
+                        continue
+                    try:
+                        gpstime_s = int(self.readdata[1][4:6])
+                    except ValueError:
+                        continue
                     if self.readdata[2] =='V':
                         self.data_valid = False
                     if self.readdata[2] == 'A':
@@ -253,7 +269,7 @@ class GPSModule:
                     self.spd_o_g = self.readdata[7]
                     self.course_o_g = self.readdata[8]
                     self.ddmmyy = self.readdata[9]
-                    if self.set_time is True and self.data_valid is True:
+                    if self.set_time is True and self.data_valid is True and self.ddmmyy != "":
                         year = int('20'+ self.ddmmyy[4:6])
                         month = int(self.ddmmyy[2:4])
                         date = int(self.ddmmyy[0:2])

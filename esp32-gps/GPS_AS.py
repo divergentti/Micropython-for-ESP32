@@ -1,31 +1,25 @@
 """
-  30.05.2023: Jari Hiltunen, version 0.3
-  - added system date and time set from satellite using GPRMC (if constructor self_settime = True)
-  - reworked the reader part
-
-
   For asynchronous StreamReader by Divergentti / Jari Hiltunen
-  Add loop into your code loop.create_task(objectname.read_async_loop())
-  Tested UBX-G60xx ROM CORE 6.02 (36023) Oct 15 2009
-  NEO-6M datasheet https://content.u-blox.com/sites/default/files/products/documents/NEO-6_DataSheet_%28GPS.G6-HW-09005%29.pdf
-  u-blox 6 Receiver Description Including Protocol Specification:
-  https://content.u-blox.com/sites/default/files/products/documents/u-blox6_ReceiverDescrProtSpec_%28GPS.G6-SW-10018%29_Public.pdf
 
-  Time-To-First-Fix 26 seconds after cold start, 1 seconds warm start
-  Maximum update rate 5 Hz
-  Accuracy 2.5 meters
+  Version 0.4. Updated 31.5.2023.
 
-  Protocol: NMEA including GSV, RMC, GSA, GGA, GLL, VTG, TXT
-  NMEA codes at https://www.nmea.org/
+  Changelog:
+  - 28.5.2023: initial version idea from Microcontrollers Lab article "NEO-6M GPS Module with ESP32 using MicroPython"
+  - 30.5.2023: added system date and time set from satellite using GPRMC (if constructor self_settime = True)
+  - 30.5.2023: reworked the reader part
+  - 31.5.2023: added weekday calculation for setting system time from satellite
 
-    GP = for GPS codes
-    BD or GB - Beidou,GA - Galileo, GL - GLONASS.
+  Tested: ESP32 with esp32-ota-20230426-v1.20.0.bin micropython & OLED display & BME680 & Neo6M GPS module
+  Neo 6M module: UBX-G60xx ROM CORE 6.02 (36023) Oct 15 2009 (Datasheets and Receiver Description available)
 
-  Usage:
+  Protocol: NMEA including GSV, RMC, GSA, GGA, GLL, VTG, TXT.
+    GP = for GPS codes. BD or GB = Beidou, GA = Galileo, GL = GLONASS.
+
+  Usage @ main.py:
         import drivers.GPS_AS as GPS
         gps1 = GPS.GPSModule(rxpin=16, txpin=17, uart=2, interval = 3)
 
-        .. your async code, which access values of the gps1 object, such as gps1.gpstime ...
+        .. your async code, which access values of the gps1 object, such as gps1.gpstime ...gps1.latitude ...
 
         async def main():
             loop = asyncio.get_event_loop()
@@ -38,19 +32,12 @@
         except MemoryError:
             reset()
 
-    For debugging:
-    - debug_gen is about general read etc
-    - debug_gga Global Positioning System Fix Data
-    - debug_vtg Track Made Good and Ground Speed
-    - debug_gll Geographic Position, Latitude/Longitude
-    - debug_gsv GPS Satellites in view
-    - debug_gsa GPS DOP and active satellites
-    - debug_rmc = Recommended minimum specific GPS/Transit data
+    For debugging options: see constructor.
+    During object init default is set_time = True, which means system time (RTC) is set from the satellite time.
+    Setting system time is done via GPRMC NMEA receive.
 
-    Setting system time is done via GPRMC receive. During object init default is set_time = True
-    Important!
-        - self.gpstime is read from GGA! Do not use that value for setting time, because it may be not correct!
-        - weekday number is not updated unless it is set before object init!
+    Important note!
+        - self.gpstime is read from GGA! Do not use setting system time, because it is not updated frequently!
 """
 
 from machine import UART, RTC
@@ -58,26 +45,25 @@ import time
 import uasyncio as asyncio
 import gc
 
-rtc_clock = RTC()
-start_code = '$'
-system_code = 'GP'
+rtc_clock = RTC()  # for setting up system time (ticks from epoc)
+start_code = '$'   # starting code in the NMEA message
+system_code = 'GP' # GPS
 
 class GPSModule:
-    #  Default UART2, rx=9, tx=10, readinterval = 1 seconds. Avoid UART1.
-    def __init__(self, rxpin=16, txpin=17, uart=2, interval=1, timeout = 60, set_time= True, debug_gen=False,
+    #  Default UART2, rx=16, tx=17, readinterval = 1 seconds. Avoid UART1. debug_gen is general debug.
+    def __init__(self, rxpin=16, txpin=17, uart=2, interval=1, set_time= True, debug_gen=False,
                  debug_gga = False, debug_vtg = False, debug_gll = False, debug_gsv=False,
                  debug_gsa=False, debug_rmc = False):
         self.moduleUart = UART(uart, 9600, 8, None, 1, rx=rxpin, tx=txpin)
         self.moduleUart.init()
-        self.read_interval = interval
-        self.timeout = timeout
+        self.read_interval = interval # module can do 5Hz, but UART may be problem
         self.set_time = set_time
-        self.gps_fix_status = False
+        self.gps_fix_status = False   # typically 0,1 or 3
         self.latitude = ""
         self.longitude = ""
-        self.quality_indicator = ""
+        self.quality_indicator = ""   # used for gps_fix too
         self.satellites = ""
-        self.gpstime = ""
+        self.gpstime = ""             # from gga (fix) message
         self.hdop = ""
         self.ortho=""
         self.ortho_u = ""
@@ -108,24 +94,23 @@ class GPSModule:
         self.foundcode = bytearray(6)
 
     @staticmethod
-    def weekday(yday, year):
-        wkd = 7%(7%yday+year+year(year-1)/4-1)
-        return wkd
+    def weekday(year, month, day):
+        # Returns weekday for RTC set. Thanks to 2DOF @ Github
+        t = [0, 3, 2, 5, 0, 3, 5, 1, 4, 6, 2, 4]
+        year -= month < 3
+        return (year + int(year / 4) - int(year / 100) + int(year / 400) + t[month - 1] + day) % 7
 
     @staticmethod
     def checksum(nmeaword):
+        # Calculates NMEA message checksum and compares to *xx checksum in the message
         linebegin = nmeaword.find(bytes(start_code, 'UTF-8'))
         cksumlenght = nmeaword.find(b'\r\n')
         cksumbegin = nmeaword.rfind(b'*')
-        if linebegin == -1:
+        if linebegin == -1 or cksumbegin == -1 or cksumlenght == -1:
             return False
-        if cksumbegin == -1:
-            return False
-        if cksumlenght == -1:
-            return False
-        # to be XORed
+        # XORed checksum
         cksum = str(nmeaword[cksumbegin+1:cksumlenght].decode("utf-8"))   # cksum in nmeaword
-        chksumdata = nmeaword[linebegin+1:cksumbegin].decode("utf-8")  # stripped nmeaword
+        chksumdata = nmeaword[linebegin+1:cksumbegin].decode("utf-8")     # stripped nmeaword
         csum = 0
         for c in chksumdata:
             csum ^= ord(c)
@@ -136,6 +121,7 @@ class GPSModule:
 
     @staticmethod
     def convert_to_degree(rawdegrees):
+        # Converts to degree. Thanks to microcontrollerlab article.
         rawasfloat = float(rawdegrees)
         firstdigits = int(rawasfloat / 100)
         nexttwodigits = rawasfloat - float(firstdigits * 100)
@@ -145,10 +131,14 @@ class GPSModule:
 
 
     async def reader(self):
+        # Reads the UART port via StreamReader and check validity of the NMEA message.
+        # Catch NMEA 0183 protocol message header, such as GPGGA, GPRMC etc. without GP (system code)
+        # Keeps byte coding.
         port = asyncio.StreamReader(self.moduleUart)
         try:
             datain = await port.readline()
         except MemoryError:
+            gc.collect()
             return False
         if self.checksum(datain) is True:
             self.readdata = datain
@@ -157,7 +147,7 @@ class GPSModule:
             if pos == -1:
                 return False
             else:
-                self.foundcode = datain[pos + 3: pos + 6]
+                self.foundcode = datain[pos + 3: pos + 6]  # returns 3 letter GP-xxx code
                 decoded_data = str(self.readdata.decode('utf-8'))
                 self.readdata = decoded_data.split(',')
             if self.debug_gen is True:
@@ -167,11 +157,11 @@ class GPSModule:
             return False
 
     async def read_async_loop(self):
+        # Forever running loop initiated from the main
 
         while True:
             if (time.time() - self.readtime) >= self.read_interval:
                 await self.reader()
-
                 if self.foundcode == b'GGA':
                     if len(self.readdata) == 15:
                         try:
@@ -233,7 +223,6 @@ class GPSModule:
                             print("K: speed over ground is measured in kph: %s" % self.gspeed_k)
                             print("Mode indicator: %s" % self.vtgmode)
                             print("--- end of VTG ---")
-
                 if self.foundcode == b'GLL':
                     # 0 = Message ID $GPGLL, 1 = Latitude in dd mm,mmmm format (0-7 decimal places)
                     # 2 = Direction of latitude N: North S: South
@@ -241,16 +230,6 @@ class GPSModule:
                     # 4 = Direction of longitude E: East W: West
                     # 5 = UTC of position in hhmmss.ss format
                     # 6 = Status indicator: A: Data valid, V: Data not valid
-                    # 7 = The checksum data, always begins with *
-                    #
-                    # Mode indicator:
-                    # A: Autonomous mode
-                    # D: Differential mode
-                    # E: Estimated (dead reckoning) mode
-                    # M: Manual input mode
-                    # S: Simulator mode
-                    # N: Data not valid
-
                     if len(self.readdata) == 7:
                         if self.debug_gll is True:
                             print("--- GLL not implemented ---")
@@ -298,10 +277,8 @@ class GPSModule:
                             year = int('20'+ self.ddmmyy[4:6])
                             month = int(self.ddmmyy[2:4])
                             date = int(self.ddmmyy[0:2])
-                            locatimenow = time.localtime()
-                            weekday = int(locatimenow[6])
-                            # TO BE IMPLEMENTED! Needs YEAR TO DATE
-                            # weekday = self.weekday(ydate, year)
+                            weekday = self.weekday(year, month, date)
+                            # Set system time!
                             rtc_clock.datetime((year,month,date, weekday, gpstime_h, gpstime_m, gpstime_s,0))
                         if self.debug_rmc is True:
                             print("--- RMC debug ---")
@@ -311,5 +288,4 @@ class GPSModule:
                             print("Speed over ground: %s" %self.spd_o_g)
                             print("Course over ground: %s" %self.course_o_g)
                             print("--- End of RMC ---")
-                gc.collect()
             await asyncio.sleep_ms(25)

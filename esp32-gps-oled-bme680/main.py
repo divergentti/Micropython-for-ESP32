@@ -1,4 +1,4 @@
- """
+"""
 31.5.2023: Version 0.1 Jari Hiltunen / Divergentti
 
 Sample script to show how OLED, BME680 and Neo6M GPS-module may be used together.
@@ -57,19 +57,61 @@ except OSError:
     sleep(30)
     raise
 
-def resolve_date():
-    # For Finland, needs checking
-    (year, month, mdate, hour, minute, second, wday, yday) = localtime()
-    weekdays = ['Ma', 'Ti', 'Ke', 'To', 'Pe', 'La', 'Su']
-    summer_march = mktime((year, 3, (14 - (int(5 * year / 4 + 1)) % 7), 1, 0, 0, 0, 0))
-    winter_december = mktime((year, 10, (7 - (int(5 * year / 4 + 1)) % 7), 1, 0, 0, 0, 0))
-    if mktime(localtime()) > summer_march:
-        dst = localtime(mktime(localtime()) + 10800)
-    elif mktime(localtime()) < winter_december:
-        dst = localtime(mktime(localtime()) + 7200)
+
+def weekday(year, month, day):
+    # Returns weekday. Thanks to 2DOF @ Github
+    t = [0, 3, 2, 5, 0, 3, 5, 1, 4, 6, 2, 4]
+    year -= month < 3
+    return (year + int(year / 4) - int(year / 100) + int(year / 400) + t[month - 1] + day) % 7
+
+def resolve_dst():
+    (year, month, mdate, hour, minute, second, wday, yday) = localtime()   # supposed to be GMT/UTC
+    match_days_begin = []
+    match_days_end = []
+    # Define the DST rules for the specified time zone
+    # Replace these rules with the actual DST rules for your time zone
+    dst_rules = {
+        "begin": (3, 6, 2, 3),  # DST begin month, day, 1=first, 2=last at 03:00. 0= Monday, 6 = Sunday
+            # March, last Sunday, 03:00
+        "end": (10, 6, 2, 4),   # DST end  month, day, 1=first, 2=last at 04:00.
+            # October, last Sunday, 04:00
+        "timezone": 2,          # hours from UTC during normal (winter time)
+        "offset": 1             # hours to be +/-
+    }
+    # Iterate begin
+    if dst_rules["begin"][0] in (1,3,5,7,8,10,11):
+        days_in_month = 30
     else:
-        dst = localtime(mktime(localtime()) + 10800)
-    (year, month, mdate, hour, minute, second, wday, yday) = dst
+        days_in_month = 31   # February does not matter here
+    # Iterate months and find days matching criteria
+    for x in range(days_in_month):
+        if weekday(year,dst_rules["begin"][0],x) == dst_rules["begin"][1]:
+            if dst_rules["begin"][2] == 2:  # last day first in the list
+                match_days_begin.insert(0,x)
+            else:
+                match_days_begin.append(x)  # fist day first in the list
+    dst_begin = mktime((year, dst_rules["begin"][0], match_days_begin[0], dst_rules["begin"][3], 0, 0,
+                        dst_rules["begin"][1], 0))
+    if dst_rules["end"][0] in (1,3,5,7,8,10,11):
+        days_in_month = 30
+    else:
+        days_in_month = 31   # February does not matter here
+    for x in range(days_in_month):
+        if weekday(year,dst_rules["end"][0],x) == dst_rules["end"][1]:
+            if dst_rules["end"][2] == 2:  # last day first in the list
+                match_days_end.insert(0,x)
+            else:
+                match_days_end.append(x)  # fist day first in the list
+    dst_end = mktime((year, dst_rules["end"][0], match_days_end[0], dst_rules["end"][3], 0, 0,
+                        dst_rules["end"][1], 0))
+    if (mktime(localtime()) < dst_begin) and (mktime(localtime()) > dst_end):
+        return localtime(mktime(localtime()) + 3600 * dst_rules["timezone"])
+    else:
+        return localtime(mktime(localtime()) + (3600 * dst_rules["timezone"]) + (3600 * dst_rules["offset"]))
+
+def resolve_date():
+    (year, month, mdate, hour, minute, second, wday, yday) = resolve_dst()
+    weekdays = ['Ma', 'Ti', 'Ke', 'To', 'Pe', 'La', 'Su']
     day = "%s.%s.%s" % (mdate, month, year)
     hours = "%s:%s:%s" % ("{:02d}".format(hour), "{:02d}".format(minute), "{:02d}".format(second))
     return day, hours, weekdays[wday]

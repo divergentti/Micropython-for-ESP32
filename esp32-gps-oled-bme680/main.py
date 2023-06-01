@@ -104,7 +104,7 @@ def resolve_dst():
                 match_days_end.append(x)  # fist day first in the list
     dst_end = mktime((year, dst_rules["end"][0], match_days_end[0], dst_rules["end"][3], 0, 0,
                         dst_rules["end"][1], 0))
-    if (mktime(localtime()) < dst_begin) and (mktime(localtime()) > dst_end):
+    if (mktime(localtime()) < dst_begin) or (mktime(localtime()) > dst_end):
         return localtime(mktime(localtime()) + 3600 * dst_rules["timezone"])
     else:
         return localtime(mktime(localtime()) + (3600 * dst_rules["timezone"]) + (3600 * dst_rules["offset"]))

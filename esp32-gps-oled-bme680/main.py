@@ -1,20 +1,25 @@
 """
-31.5.2023: Version 0.1 Jari Hiltunen / Divergentti
+Version 0.2 Jari Hiltunen / Divergentti
+Updated: 2.6.2023
 
 Sample script to show how OLED, BME680 and Neo6M GPS-module may be used together.
+Logs values into csv- formatted file every minute.
+Filename = val-daynumber.csv, path /data
+Check if file space is less than 20000 and starts rotation by deleting oldest file
 
 ESP32 with esp32-ota-20230426-v1.20.0.bin micropython.
 
 I2C for the OLED and BME680 are connected to SDA = Pin21 and SCL (SCK) = Pin22.
 Use command i2c.scan() to check which devices respond from the I2C channel.
 
-Asyncronous code.
+Mostly asyncronous code.
 """
 
 
 from machine import SoftI2C, Pin, freq, reset, TouchPad, reset_cause
 import uasyncio as asyncio
 from utime import mktime, localtime, sleep
+import os
 import gc
 import drivers.BME680 as BMESENSOR
 import drivers.SH1106 as OLEDDISPLAY
@@ -22,9 +27,9 @@ import drivers.GPS_AS as GPS
 gc.collect()
 from json import load
 import esp32
+
 gc.collect()
 # Globals
-co2_average = None
 temp_average = None
 rh_average = None
 pressure_average = None
@@ -50,8 +55,16 @@ try:
         SCREEN_TIMEOUT = data['SCREEN_TIMEOUT']
         TEMP_CORRECTION = data['TEMP_CORRECTION']
         RH_CORRECTION = data['RH_CORRECTION']
-        CO2_CORRECTION = data['CO2_CORRECTION']
         PRESSURE_CORRECTION = data['PRESSURE_CORRECTION']
+        DST_BEGIN_M = data['DST_BEGIN_M']         # Month
+        DST_BEGIN_DAY = data['DST_BEGIN_DAY']   # Sunday = 0
+        DST_BEGIN_OCC = data['DST_BEGIN_OCC']   # 1=first DST_BEGIN_DAY, 2=last
+        DST_BEGIN_TIME = data['DST_BEGIN_TIME'] # Hour
+        DST_END_M = data['DST_END_M']
+        DST_END_DAY = data['DST_END_DAY']
+        DST_END_TIME = data['DST_END_TIME']
+        DST_END_OCC = data['DST_END_OCC']
+        DST_TIMEZONE = data['DST_TIMEZONE']
 except OSError:
     print("Runtime parameters missing. Can not continue!")
     sleep(30)
@@ -71,12 +84,12 @@ def resolve_dst():
     # Define the DST rules for the specified time zone
     # Replace these rules with the actual DST rules for your time zone
     dst_rules = {
-        "begin": (3, 6, 2, 3),  # DST begin month, day, 1=first, 2=last at 03:00. 0= Monday, 6 = Sunday
-            # March, last Sunday, 03:00
-        "end": (10, 6, 2, 4),   # DST end  month, day, 1=first, 2=last at 04:00.
-            # October, last Sunday, 04:00
-        "timezone": 2,          # hours from UTC during normal (winter time)
-        "offset": 1             # hours to be +/-
+        "begin": (DST_BEGIN_M, DST_BEGIN_DAY, DST_BEGIN_OCC, DST_BEGIN_TIME),
+            # 3 = March, 2 = last, 6 = Sunday, 3 = 03:00
+        "end": (DST_END_M, DST_END_DAY, DST_END_OCC, DST_END_TIME),   # DST end  month, day, 1=first, 2=last at 04:00.
+            # 10 = October, 2 = last, 6 = Sunday, 4 = 04:00
+        "timezone": DST_TIMEZONE,          # hours from UTC during normal (winter time)
+        "offset": 1                        # hours to be added to timezone when DST is True
     }
     # Iterate begin
     if dst_rules["begin"][0] in (1,3,5,7,8,10,11):
@@ -89,7 +102,7 @@ def resolve_dst():
             if dst_rules["begin"][2] == 2:  # last day first in the list
                 match_days_begin.insert(0,x)
             else:
-                match_days_begin.append(x)  # fist day first in the list
+                match_days_begin.append(x)  # first day first in the list
     dst_begin = mktime((year, dst_rules["begin"][0], match_days_begin[0], dst_rules["begin"][3], 0, 0,
                         dst_rules["begin"][1], 0))
     if dst_rules["end"][0] in (1,3,5,7,8,10,11):
@@ -101,7 +114,7 @@ def resolve_dst():
             if dst_rules["end"][2] == 2:  # last day first in the list
                 match_days_end.insert(0,x)
             else:
-                match_days_end.append(x)  # fist day first in the list
+                match_days_end.append(x)  # first day first in the list
     dst_end = mktime((year, dst_rules["end"][0], match_days_end[0], dst_rules["end"][3], 0, 0,
                         dst_rules["end"][1], 0))
     if (mktime(localtime()) < dst_begin) or (mktime(localtime()) > dst_end):
@@ -218,8 +231,6 @@ async def show_what_i_do():
                 print("   Gas: %s" % gas_average)
             if pressure_average is not None:
                 print("   Pressure: %s" % pressure_average)
-        if co2_average is not None:
-            print("   CO2 is %s" % co2_average)
         if gps1.gps_fix_status is True:
             print("3 ---------GPS----------- 3")
             print("     Latitude: %s" % gps1.latitude)
@@ -253,9 +264,7 @@ touch = TouchPad(Pin(TOUCH_PIN))
 
 # GPS Module
 # If needed, add debug= three letter NMEA code in driver (GGA/VTG/GLL/GSV/GSA/RMC)
-gps1 = GPS.GPSModule(rxpin=16, txpin=17, uart=2, interval = 1, debug_gga=False, debug_gen=False, debug_rmc=True)
-if reset_cause() ==3:  # cold boot, for some reason UART init needs to be redone
-    gps1.moduleUart.init()
+gps1 = GPS.GPSModule(rxpin=16, txpin=17, uart=2, interval = 1, debug_gga=False, debug_gen=False, debug_rmc=False)
 
 async def rotate_screens_loop():
     while True:
@@ -355,6 +364,90 @@ async def page_4():
     await asyncio.sleep_ms(10)
 
 
+async def log_to_file_loop():
+    # Executes SYNCHRONOUS code for file write if GPS is in fix and sensor values available
+    while True:
+        if (gps1.gps_fix_status is True) and (temp_average is not None) and (rh_average is not None) \
+            and (gas_average is not None) and (pressure_average is not None):
+            try:
+                csv_logging()
+                await asyncio.sleep(60)
+            except OSError:
+                # Purge oldest files
+                if DEBUG_SCREEN_ACTIVE == 1:
+                    print("OS Error, disc full, should not be")
+        await asyncio.sleep_ms(25)
+
+
+def csv_logging():
+    # Checks if /data path exists. If not, create /data
+    # Check if space is getting too low. IF yes, deletes oldest log file
+    # Note! Not asynchronous!
+
+    file_dates = []
+
+    try:
+        os.listdir('/data')
+    except OSError:
+        os.mkdir('/data')
+
+    filename = "/data/val-%s.csv" %str(resolve_date()[0].replace('.',''))  # file changed every day
+
+    try:
+        with open(filename, 'a+') as logf:
+            try:
+                logf.write("%s" % str(resolve_date()[0])) # Date in local format
+                logf.write(",")
+                logf.write("%s" % str(resolve_date()[1])) # Localtime (not GMT/UTC)
+                logf.write(",")
+                logf.write(str(temp_average))
+                logf.write(",")
+                logf.write(str(rh_average))
+                logf.write(",")
+                logf.write(str(pressure_average))
+                logf.write(",")
+                logf.write(str(gas_average))
+                logf.write(",")
+                logf.write(str(gps1.latitude))
+                logf.write(",")
+                logf.write(str(gps1.longitude))
+                logf.write(",")
+                logf.write(str(gps1.satellites))
+                logf.write(",")
+                logf.write(str(gps1.ortho))
+                logf.write(",")
+                logf.write(str(gps1.geoids))
+                logf.write(",")
+                logf.write(str(gps1.speed_k))
+                logf.write("\r\n")
+            except OSError as e:
+                print('OSError %s' % e)
+                raise OSError
+    except OSError as e:
+        print('OSError %s' %e )
+        raise OSError
+    logf.close()
+    if DEBUG_SCREEN_ACTIVE == 1:
+        print("4 ---------OS----------- 4")
+        print("Succesfull write to file %s" %filename)
+
+    blocksize = os.statvfs('/')[0]
+    freeblock = os.statvfs('/')[3]
+    if DEBUG_SCREEN_ACTIVE == 1:
+        print("Space left: %s" % (freeblock * blocksize))
+
+    if (blocksize * freeblock) < 50000:
+        # Delete oldest file
+        list_of_files = os.listdir('/data')
+        full_path = ["data/{0}".format(x) for x in list_of_files]
+        for y in range (len(full_path)):
+            file_dates.append((os.stat(full_path[y])[9], full_path[y]))   # last value is st_ctime
+            # file_dates[time][filename]
+        file_dates.sort()
+        oldest_file = file_dates[0][1]
+        if DEBUG_SCREEN_ACTIVE == 1:
+            print("Deleting oldest file: %s" %oldest_file)
+        os.remove(oldest_file)
 
 async def main():
     loop = asyncio.get_event_loop()
@@ -363,6 +456,7 @@ async def main():
     loop.create_task(read_bme680_loop())
     loop.create_task(gps1.read_async_loop())
     loop.create_task(rotate_screens_loop())
+    loop.create_task(log_to_file_loop())
     loop.run_forever()
 
 if __name__ == "__main__":

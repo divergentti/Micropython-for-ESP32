@@ -24,12 +24,12 @@ Version 0.1 Jari Hiltunen - 6.6.2023 and most likely last code update due to sen
 
 from machine import SoftI2C, Pin, freq, reset
 import uasyncio as asyncio
-from utime import mktime, localtime, sleep
+from utime import mktime, localtime
 import gc
-import drivers.WIFICONN_AS as WIFINET
-import drivers.BME680 as BmESensor
+import drivers.BME680 as BMESENSOR
 import drivers.SH1106 as OLEDDISPLAY
-
+gc.collect()
+import drivers.WIFICONN_AS as WIFINET
 gc.collect()
 from json import load
 import esp32
@@ -43,7 +43,6 @@ rh_average = 0
 pressure_average = 0
 gas_r_average = 0
 BME680_sensor_faulty = False
-
 
 def log_errors(errin):
     filename = "/errors.csv"
@@ -352,7 +351,7 @@ net = WIFINET.ConnectWiFi(SSID1, PASSWORD1, SSID2, PASSWORD2, NTPSERVER, DHCP_NA
 
 i2c = SoftI2C(scl=Pin(I2C_SCL_PIN), sda=Pin(I2C_SDA_PIN))
 try:
-    bmes = BmESensor.BME680_I2C(i2c=i2c)
+    bmes = BMESENSOR.BME680_I2C(i2c=i2c)
 except OSError as e:
     log_errors("BMES init: %s" % e)
     raise Exception("Error: %s - BME sensor init error!" % e)
@@ -381,7 +380,6 @@ async def read_bme680_loop():
             rh_list.append(round(float(bmes.humidity)) + RH_CORRECTION)
             press_list.append(round(float(bmes.pressure)) + PRESSURE_CORRECTION)
             gas_r_list.append(round(float(bmes.gas)))
-
         except ValueError as e:
             log_errors("Value error in BME loop: %s" % e)
         if len(temp_list) >= 60:

@@ -42,15 +42,29 @@ temp_average = 0
 rh_average = 0
 pressure_average = 0
 gas_r_average = 0
-iaq = 0
 BME680_sensor_faulty = False
+
+
+def log_errors(errin):
+    filename = "/errors.csv"
+    with open(filename, 'a+') as logf:
+        try:
+            logf.write("%s" % str(resolve_date()[0]))  # Date in local format
+            logf.write(",")
+            logf.write("%s" % str(errin))
+            logf.write("\r\n")
+        except OSError as e:
+            print('OSError %s' % e)
+            raise OSError
+    logf.close()
 
 
 try:
     f = open('parameters.py', "r")
     from parameters import I2C_SCL_PIN, I2C_SDA_PIN, TOUCH_PIN
     f.close()
-except OSError:  # open failed
+except OSError as e:  # open failed
+    log_errors("Parameters: %s" %e)
     print("parameter.py-file missing! Can not continue!")
     raise
 
@@ -101,9 +115,9 @@ try:
         DST_END_TIME = data['DST_END_TIME']
         DST_END_OCC = data['DST_END_OCC']
         DST_TIMEZONE = data['DST_TIMEZONE']
-except OSError:
+except OSError as e:
+    log_errors("Runtime.json: %s" %e)
     print("Runtime parameters missing. Can not continue!")
-    sleep(30)
     raise
 
 def weekday(year, month, day):
@@ -264,6 +278,7 @@ async def mqtt_up_loop():
         try:
             await client.connect()
         except OSError as e:
+            log_errors("WiFi connect: %s" %e)
             print("Soft reboot caused error %s" % e)
             await asyncio.sleep(5)
             reset()
@@ -274,6 +289,7 @@ async def mqtt_up_loop():
                 if client.isconnected() is True:
                     mqtt_up = True
             except OSError as e:
+                log_errors("MQTT Connect: %s" %e)
                 if DEBUG_SCREEN_ACTIVE == 1:
                     print("MQTT error: %s" % e)
                     print("Config: %s" % config)
@@ -320,7 +336,7 @@ async def show_what_i_do():
             if (temp_average is not None) and (rh_average is not None):
                 print("   Temp: %sC, Rh: %s" % (temp_average, rh_average))
             if gas_r_average is not None:
-                print("   GasR: %s" % gas_r_average)
+                print("   GasR: %s" % (gas_r_average / 1000))  # kOhms
             if pressure_average is not None:
                 print("   Pressure: %s" % pressure_average)
         print("\n")
@@ -338,12 +354,14 @@ i2c = SoftI2C(scl=Pin(I2C_SCL_PIN), sda=Pin(I2C_SDA_PIN))
 try:
     bmes = BmESensor.BME680_I2C(i2c=i2c)
 except OSError as e:
+    log_errors("BMES init: %s" % e)
     raise Exception("Error: %s - BME sensor init error!" % e)
 
 #  OLED display
 try:
     display = Displayme()
 except OSError as e:
+    log_errors("OLED init: %s" %e)
     raise Exception("Error: %s - OLED Display init error!" % e)
 
 
@@ -352,7 +370,6 @@ async def read_bme680_loop():
     global rh_average
     global pressure_average
     global gas_r_average
-    global iaq
     temp_list = []
     rh_list = []
     press_list = []
@@ -365,8 +382,8 @@ async def read_bme680_loop():
             press_list.append(round(float(bmes.pressure)) + PRESSURE_CORRECTION)
             gas_r_list.append(round(float(bmes.gas)))
 
-        except ValueError:
-            pass
+        except ValueError as e:
+            log_errors("Value error in BME loop: %s" % e)
         if len(temp_list) >= 60:
             temp_list.pop(0)
         if len(rh_list) >= 60:
@@ -428,7 +445,8 @@ async def display_loop():
         await display.text_to_row("%sC Rh %s %%" % (temp_average, rh_average), 2, 5)
         await display.text_to_row("Pressure:%s" % pressure_average, 3, 5)
         await display.text_to_row("GasRes:%s" % gas_r_average, 4, 5)
-        await display.text_to_row("IAQ:%s " % iaq, 5, 5)
+        await display.text_to_row("MCU Temp:%s " % (("{:.1f}".format((
+                (float(esp32.raw_temperature()) - 32.0)* 5 / 9)))), 5, 5)
         await display.activate_screen()
         await asyncio.sleep(1)
 
@@ -449,5 +467,6 @@ async def main():
 if __name__ == "__main__":
     try:
         asyncio.run(main())
-    except MemoryError:
+    except MemoryError as e:
+        log_errors(e)
         reset()

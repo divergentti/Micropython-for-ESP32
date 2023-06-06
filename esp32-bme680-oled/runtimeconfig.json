@@ -27,7 +27,7 @@
  "TOPIC_IAQ": "koti/ulko/ilmanlaatu",
  "TOPIC_DP": "koti/ulko/kastepiste",
  "TEMP_TRESHOLD" : 30.0,
- "TEMP_CORRECTION" : 0,
+ "TEMP_CORRECTION" : -9.5,
  "RH_TRESHOLD" : 90.0,
  "RH_CORRECTION" : 0,
  "PRESSURE_TRESHOLD" : 1100.0,

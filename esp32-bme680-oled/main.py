@@ -2,6 +2,11 @@
 ESP32 with esp32-ota-20230426-v1.20.0.bin micropython.
 
 This script is used for I2C connected OLED display, BME680 temperature/rh/pressure/voc sensor
+The BME680 sensor do not have IAQ driver (Bosch BSEC) for MPY yet. You can not make proper IAQ calucalations.
+Building own firmware is not possible, because only .a C driver is published from BSEC.
+Temperature readings are also off. Might be wise to use some other sensor.
+
+Englosure for 3D printer is available from Thingsverse https://www.thingiverse.com/thing:6063412
 
 As default, I2C for the OLED and BME680 are connected to SDA = Pin21 and SCL (SCK) = Pin22 (check parameters.py).
 Use command i2c.scan() to check which devices respond from the I2C channel.
@@ -13,7 +18,7 @@ For webrepl, remember to execute import webrepl_setup one time.
 
 Asyncronous code.
 
-Version 0.1 Jari Hiltunen -  xxxxxx
+Version 0.1 Jari Hiltunen - 6.6.2023 and most likely last code update due to sensor issue
 """
 
 
@@ -397,7 +402,7 @@ async def mqtt_publish_loop():
                 await client.publish(TOPIC_RH, str(rh_average), retain=0, qos=0)
             if 0 < pressure_average < 5000:
                 await client.publish(TOPIC_PRESSURE, str(pressure_average), retain=0, qos=0)
-            if 0 < gas_r_average < 100000:
+            if 0 < gas_r_average < 150000:
                 await client.publish(TOPIC_GASR, str(gas_r_average), retain=0, qos=0)
 
 

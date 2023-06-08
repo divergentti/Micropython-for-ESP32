@@ -3,6 +3,8 @@ Update 8.6.2023:
 - added mqtt-simple synchronous driver for MQTT updates
 - reworked WIFICONN_AS.py driver, simplier and faster
 - added display light poweron via transistor and screen timeout
+- added error logging into errors.csv file
+- added DST calculation which should work for Finland
 - tested with esp32-ota-20230426-v1.20.0.bin
 
 Update 20.10.2022:

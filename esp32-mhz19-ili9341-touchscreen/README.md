@@ -1,3 +1,10 @@
+Update 8.6.2023:
+- removed MQTT_AS.py due to memory leakage issues (latest version had similar problems)
+- added mqtt-simple synchronous driver for MQTT updates
+- reworked WIFICONN_AS.py driver, simplier and faster
+- added display light poweron via transistor and screen timeout
+- tested with esp32-ota-20230426-v1.20.0.bin
+
 Update 20.10.2022:
 - added average calculation for temp, rh and pressure (list of 20 values, pop last value out from the list when size 20)
 - average calculation slows reading changes, but in other hand one or two sensor failures do not cause problems

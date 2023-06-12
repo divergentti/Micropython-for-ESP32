@@ -321,9 +321,9 @@ async def show_what_i_do():
         print("\n1 ---------WIFI------------- 1")
         if START_NETWORK == 1: #net.use_ssid,
             print("   WiFi Connected %s, hotspot: hidden, signal strength: %s" % (net.net_ok,  net.strength))
-            # print("   IP-address: %s, connection attempts failed %s" % (net.ip_a, net.con_att_fail))
-        # if START_MQTT == 1:
-            # print("   MQTT Connected: %s, broker uptime: %s" % (mqtt_up, broker_uptime))
+            print("   IP-address: %s" % net.ip_a)
+        if START_MQTT == 1:
+            print("   MQTT Connected: %s, broker uptime: %s" % (mqtt_up, broker_uptime))
         print("   Memory free: %s, allocated: %s" % (gc.mem_free(), gc.mem_alloc()))
         print("   Heap info %s, hall sensor %s, raw-temp %sC" % (esp32.idf_heap_info(esp32.HEAP_DATA),
                                                                  esp32.hall_sensor(),
@@ -417,7 +417,7 @@ async def mqtt_publish_loop():
                 await client.publish(TOPIC_RH, str(rh_average), retain=0, qos=0)
             if 0 < pressure_average < 5000:
                 await client.publish(TOPIC_PRESSURE, str(pressure_average), retain=0, qos=0)
-            if 0 < gas_r_average < 150000:
+            if 0 < gas_r_average < 350000:
                 await client.publish(TOPIC_GASR, str(gas_r_average), retain=0, qos=0)
 
 

@@ -22,7 +22,7 @@ For webrepl, remember to execute import webrepl_setup one time.
 
 Asyncronous code.
 
-Version 0.1 Jari Hiltunen -126.6.2023
+Version 0.1 Jari Hiltunen -13.6.2023
 """
 
 
@@ -483,7 +483,7 @@ async def display_loop():
         await display.text_to_row("    %s" % resolve_date()[1], 1, 5)
         await display.text_to_row("S1:%s S2:%s" % ("{:.1f}".format(temps1_average), "{:.1f}".format(temps2_average)), 2, 5)
         await display.text_to_row("S3:%s" % "{:.1f}".format(temps3_average), 3, 5)
-        await display.text_to_row("S4:%s S5:%s" % ("{:.1f}".format(temps3_average), "{:.1f}".format(temps5_average)), 4, 5)
+        await display.text_to_row("S4:%s S5:%s" % ("{:.1f}".format(temps4_average), "{:.1f}".format(temps5_average)), 4, 5)
         # await display.text_to_row("Alarms:%s " % alarms, 5, 5)
         await display.activate_screen()
         await asyncio.sleep(1)

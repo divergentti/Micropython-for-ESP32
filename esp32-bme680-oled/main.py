@@ -19,6 +19,7 @@ For webrepl, remember to execute import webrepl_setup one time.
 Asyncronous code.
 
 Version 0.1 Jari Hiltunen - 6.6.2023 and most likely last code update due to sensor issue
+Updated 20.6.2023 - removed gas resistance limits from MQTT publish. Values seems to go over 650 kOhm
 """
 
 
@@ -376,10 +377,10 @@ async def read_bme680_loop():
     #  Read values from sensor once per second, add them to the array, delete oldest when size 60 (seconds)
     while True:
         try:
-            temp_list.append(round(float(bmes.temperature)) + TEMP_CORRECTION)
-            rh_list.append(round(float(bmes.humidity)) + RH_CORRECTION)
-            press_list.append(round(float(bmes.pressure)) + PRESSURE_CORRECTION)
-            gas_r_list.append(round(float(bmes.gas)))
+            temp_list.append((float(bmes.temperature)) + TEMP_CORRECTION)
+            rh_list.append((float(bmes.humidity)) + RH_CORRECTION)
+            press_list.append((float(bmes.pressure)) + PRESSURE_CORRECTION)
+            gas_r_list.append((float(bmes.gas)))
         except ValueError as e:
             log_errors("Value error in BME loop: %s" % e)
         if len(temp_list) >= 60:
@@ -417,8 +418,7 @@ async def mqtt_publish_loop():
                 await client.publish(TOPIC_RH, str(rh_average), retain=0, qos=0)
             if 0 < pressure_average < 5000:
                 await client.publish(TOPIC_PRESSURE, str(pressure_average), retain=0, qos=0)
-            if 0 < gas_r_average < 350000:
-                await client.publish(TOPIC_GASR, str(gas_r_average), retain=0, qos=0)
+            await client.publish(TOPIC_GASR, str(gas_r_average), retain=0, qos=0)
 
 
 # For MQTT_AS

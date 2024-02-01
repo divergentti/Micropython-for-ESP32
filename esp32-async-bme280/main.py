@@ -183,9 +183,9 @@ async def mqtt_publish_loop():
             gc.collect()
             gc.threshold(gc.mem_free() // 4 + gc.mem_alloc())
             await asyncio.sleep(10)
-        else:
+        elif mqtt_up is True:
             await asyncio.sleep(MQTT_IVAL)  # Seconds
-            if -40 < s_1_temp_ave < 100 and s_1_temp_ave:
+            if -40 < s_1_temp_ave < 100:
                 await client.publish(T_TEMP_1, str(s_1_temp_ave), retain=0, qos=0)
             if 0 < s_1_rh_ave < 100:
                 await client.publish(T_RH_1, str(s_1_rh_ave), retain=0, qos=0)

@@ -3,6 +3,7 @@
 "PASSWORD1" : "PW1",
 "SSID2" : "AP2",
 "PASSWORD2" : "PW2",
+"MQTT_SSL" : 0,
 "MQTT_PORT" : "8883",
 "MQTT_USER" : "u1",
 "MQTT_PASSWORD": "p1",

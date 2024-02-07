@@ -1,6 +1,6 @@
 # This class is for asynchronous WiFi connection.
 #
-#   7.2.2023: Jari Hiltunen / Divergentti
+#   7.2.2024: Jari Hiltunen / Divergentti
 #
 #   in your main.py:
 #   import WIFICONN_AS as WNET
@@ -91,7 +91,6 @@ class ConnectWiFi(object):
 
             if ((self.net_ok is True) and (self.s_wbr is True) and
                     (self.wbrpl_pwd is not None) and (self.wbrpl_sted is False)):
-                print("Start webrpl")
                 import webrepl
                 # Note! Execute in REPL command import webrepl_setup  !! Check boot.py after setup!
                 try:

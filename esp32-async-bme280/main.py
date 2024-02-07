@@ -92,7 +92,8 @@ try:
     bmes = BME.BME280(i2c=i2c1)
 except OSError as e:
     raise OSError("Error: %s - Sensor 1 (bmes) not connected!" % e)
-    
+
+
 
 async def read_sensors_loop():
     global s_1_temp_ave, s_1_rh_ave, s_1_pres_ave
@@ -201,6 +202,8 @@ async def show_what_i_do():
         if S_NET == 1:
             print("   WiFi Connected %s, hotspot: %s, signal strength: %s" % (net.net_ok, net.use_ssid, net.strength))
             print("   IP-address: %s" % net.ip_a)
+            print("   WebRepl status: %s" % net.wbrpl_sted)
+            print("   Last NET error %s" % net.last_err)
         if S_MQTT == 1:
             print("   MQTT Connected: %s, broker uptime: %s" % (mqtt_up, broker_uptime))
         print("   Memory free: %s, allocated: %s" % (gc.mem_free(), gc.mem_alloc()))

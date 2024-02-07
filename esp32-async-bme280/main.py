@@ -91,8 +91,8 @@ i2c1 = SoftI2C(scl=Pin(I2C1_SCL_PIN), sda=Pin(I2C1_SDA_PIN))
 try:
     bmes = BME.BME280(i2c=i2c1)
 except OSError as e:
-    raise "Error: %s - Sensor 1 (bmes) not connected!" % e
-
+    raise OSError("Error: %s - Sensor 1 (bmes) not connected!" % e)
+    
 
 async def read_sensors_loop():
     global s_1_temp_ave, s_1_rh_ave, s_1_pres_ave

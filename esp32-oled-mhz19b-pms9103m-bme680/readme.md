@@ -6,7 +6,7 @@ Initial code. The particle sensor, CO2 sensor and BME680 seems to work, but I br
 
 Testing:
 
->>> i2c.scan() finds the display, but backlight does not illuminate.
+command i2c.scan() finds the display, but backlight does not illuminate.
 [60, 119]
 
 These scripts are used for I2C connected OLED display, BME680 temperature/rh/pressure/voc sensor

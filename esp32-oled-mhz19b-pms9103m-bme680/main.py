@@ -37,6 +37,8 @@ Asyncronous code.
 
 
 Version 0.1 Jari Hiltunen -  xxxxxx
+
+WAITING for new OLED display, the code should work mostly
 """
 
 

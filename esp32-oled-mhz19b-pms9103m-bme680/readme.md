@@ -1,4 +1,4 @@
-25.07.2024
+25.07.2024 (project waiting for new OLED display to arrive, code works partly)
 
 Case for this gadget at https://www.thingiverse.com/thing:6707670
 
@@ -21,9 +21,9 @@ Values could be transferred by MQTT to the MQTT broker and from the broker to th
 I2C for the OLED and BME680 are connected to SDA = Pin21 and SCL (SCK) = Pin22.
 Use command i2c.scan() to check which devices respond from the I2C channel.
 
-MH-Z19B and PMS9103M are connected to UART1 and UART2.
+MH-Z19B and PMS9103M are connected to UART1 and UART2. Check parameters.py
 
-PMS9103M (9003M) datasheet https://evelta.com/content/datasheets/203-PMS9003M.pdf
+PMS9103M datasheet https://evelta.com/content/datasheets/203-PMS9003M.pdf
 
 Pinout (ledge upwards, PIN1 = right):
 PIN1 = VCC = 5V

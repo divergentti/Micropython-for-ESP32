@@ -1,3 +1,14 @@
+25.07.2024
+
+Case for this gadget at https://www.thingiverse.com/thing:6707670
+
+Initial code. The particle sensor, CO2 sensor and BME680 seems to work, but I broke my last OLED display and need to wait for new to arrive. 
+
+Testing:
+
+>>> i2c.scan() finds the display, but backlight does not illuminate.
+[60, 119]
+
 These scripts are used for I2C connected OLED display, BME680 temperature/rh/pressure/voc sensor
 MH-Z19B CO2 NDIR-sensor, PMS9103M particle sensor.
 
@@ -16,8 +27,8 @@ PIN2 = GND
 PIN3 = SET (TTL 3.3V = normal working, GND = sleeping) = 4 *
 PIN4 = RXD (3.3V) = 17
 PIN5 = TXD (3.3V) = 16
-PIN6 = RESET = 2 *
-7,8 N/C.
+PIN6 = RESET 
+7,8 N/C. * = pullup
 
 MH-Z19B databseet: https://www.winsen-sensor.com/d/files/infrared-gas-sensor/mh-z19b-co2-ver1_0.pdf
 

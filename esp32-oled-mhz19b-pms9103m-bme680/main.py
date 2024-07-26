@@ -274,8 +274,9 @@ class DisplayMe(object):
     async def txt_2_r(self, text, row, time):
         self.time = time
         if len(text) > self.dwidth:
-            self.scr.text('Row too long', 0, 1 + row * 10, 1)
-        elif len(text) <= self.dwidth:
+            truncated_text = text[:self.dwidth]  # Truncate the text to fit the width
+            self.scr.text(truncated_text, 0, 1 + row * 10, 1)
+        else:
             self.scr.text(text, 0, 1 + row * 10, 1)
 
     async def act_scr(self):
@@ -318,6 +319,7 @@ class DisplayMe(object):
 
     async def strt_scr(self):
         self.scr.poweron()
+
 
 
 class AirQuality(object):

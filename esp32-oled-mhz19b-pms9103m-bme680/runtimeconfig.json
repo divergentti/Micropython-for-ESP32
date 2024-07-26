@@ -48,5 +48,14 @@
 "T_PCNT_2_5" : "koti/mh3/PCNT_2_5",
 "T_PCNT_5_0" : "koti/mh3/PCNT_5_0",
 "T_PCNT_10_0" : "koti/mh3/PCNT_10_0",
- "AQ_THOLD" : 5000
+ "AQ_THOLD" : 5000,
+ "DST_BEGIN_M": 3,
+ "DST_BEGIN_DAY": 6,
+ "DST_BEGIN_OCC": 2,
+ "DST_BEGIN_TIME": 3,
+ "DST_END_M": 10,
+ "DST_END_DAY": 6,
+ "DST_END_TIME": 3,
+ "DST_END_OCC": 2,
+ "DST_TIMEZONE": 2
 }

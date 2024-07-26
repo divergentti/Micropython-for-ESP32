@@ -8,9 +8,8 @@ Changes:
 - reworked globas
 
 Issues and not yet complete:
-- Display items
-- MQTT handshake is still problematic, causing sofboots due to OSError
-
+- PMS9103M dictionary needs reworking, AirQuality index calculation do not get enough data
+- calibrations
 
 
 25.07.2024 (project waiting for new OLED display to arrive, code works partly)
@@ -18,11 +17,11 @@ Issues and not yet complete:
 Case for this gadget at https://www.thingiverse.com/thing:6707670
 
 Components:
-1.3 inch OLED module white/blue SPI/IIC I2C Communicate color 128X64 1.3 inch OLED LCD LED Display Module 1.3" OLED module (2.24€)
-ESP32-DevKitC core board ESP32 V4 development board ESP32-WROOM-32D/U (3.32€)
-BME680 Digital Temperature Humidity Pressure Sensor CJMCU-680 High Altitude Sensor Module Development Board (6.64€)
-MH-Z19B IR Infrared CO2 Sensor Carbon Dioxide Gas Sensor Module CO2 Monitor 400-5000 0-5000ppm UART PWM (15.31€)
-PMS9103M PM2.5 Laser Dust Particle Sensor Module Detects PM2S-3 Indoor Gas Air Quality Detection PMS9003M Plantower For Purifier (11.71€)
+- 1.3 inch OLED module white/blue SPI/IIC I2C Communicate color 128X64 1.3 inch OLED LCD LED Display Module 1.3" OLED module (2.24€)
+- ESP32-DevKitC core board ESP32 V4 development board ESP32-WROOM-32D/U (3.32€)
+- BME680 Digital Temperature Humidity Pressure Sensor CJMCU-680 High Altitude Sensor Module Development Board (6.64€)
+- MH-Z19B IR Infrared CO2 Sensor Carbon Dioxide Gas Sensor Module CO2 Monitor 400-5000 0-5000ppm UART PWM (15.31€)
+- PMS9103M PM2.5 Laser Dust Particle Sensor Module Detects PM2S-3 Indoor Gas Air Quality Detection PMS9003M Plantower For Purifier (11.71€)
 Total about: 39€
 
 Initial code. The particle sensor, CO2 sensor and BME680 seems to work, but I broke my last OLED display and need to wait for new to arrive. Command i2c.scan() finds the display, but backlight does not illuminate.

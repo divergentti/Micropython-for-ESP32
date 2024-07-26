@@ -26,8 +26,12 @@ from json import load
 from drivers.MQTT_AS import MQTTClient, config
 gc.collect()
 
+last_error = None
 
 def log_errors(err_in):
+    global last_error
+    last_error = err_in
+
     filename = "/errors.csv"
     max_file_size_bytes = 1024  # 1KB
 
@@ -156,6 +160,7 @@ mhz19_f = False
 pms_f = False
 scr_f = False
 last_update = time()
+
 
 # For MQTT_AS
 config['server'] = mqtt_s
@@ -344,30 +349,34 @@ async def mqtt_up_loop():
         config['ssid'] = net.use_ssid
         config['wifi_pw'] = net.u_pwd
         MQTTClient.DEBUG = True
-        client = MQTTClient(config)
+        mq_clnt = MQTTClient(config)
         try:
-            await client.connect()
-        except OSError as e:
-            print("Soft reboot caused error %s" % e)
+            await mq_clnt.connect()
+        except OSError as err:
+            log_errors("Soft reboot caused error %s: %s" % err)
+            if deb_scr_a == 1:
+                print("Soft reboot caused error %s ", err)
             await asyncio.sleep(5)
             reset()
         while mqtt_up is False:
             await asyncio.sleep(5)
             try:
-                await client.connect()
-                if client.isconnected() is True:
+                await mq_clnt.connect()
+                if mq_clnt.isconnected() is True:
                     mqtt_up = True
-            except OSError as e:
+            except OSError as err:
+                log_errors("MQTT connect error: %s: %s" % err)
+                log_errors("Config: %s" % config)
                 if deb_scr_a == 1:
-                    print("MQTT error: %s" % e)
-                    print("Config: %s" % config)
+                    print("MQTT error: %s" % err)
+
     n = 0
     while True:
         # await self.mqtt_subscribe()
         await asyncio.sleep(5)
         if deb_scr_a == 1:
             print('mqtt-publish', n)
-        await client.publish('result', '{}'.format(n), qos=1)
+        await mq_clnt.publish('result', '{}'.format(n), qos=1)
         n += 1
 
 async def mqtt_subscribe(client):
@@ -406,6 +415,7 @@ async def show_what_i_do():
             print("   %s < 1.0 & %s < 2.5" % (pms.pms_dictionary['PCNT_1_0'], pms.pms_dictionary['PCNT_2_5']))
             print("   %s < 5.0 & %s < 10.0" % (pms.pms_dictionary['PCNT_5_0'], pms.pms_dictionary['PCNT_10_0']))
         print("3 ---------FAULTS------------- 3")
+        print("   Last error: %s " % last_error)
         if bme_s_f:
             print("BME680 sensor faulty!")
         if mhz19_f:
@@ -432,7 +442,8 @@ try:
     bmes = BMES.BME680_I2C(i2c=i2c)
 except OSError as err:  # open failed
     log_errors("Error: %s - BME sensor init error!" % err)
-    print("Error: %s - BME sensor init error!", err)
+    if deb_scr_a == 1:
+        print("Error: %s - BME sensor init error!", err)
     bme_s_f = True
 
 # Particle sensor
@@ -443,7 +454,8 @@ try:
     aq = AirQuality(pms)
 except OSError as err:
     log_errors("Error: %s - Particle sensor init error!" % err)
-    print("Error: %s - Particle sensor init error!" % err)
+    if deb_scr_a == 1:
+        print("Error: %s - Particle sensor init error!" % err)
     pms_f = True
 
 # CO2 sensor
@@ -451,7 +463,8 @@ try:
     co2s = CO2.MHZ19bCO2(uart=MH_UART, rxpin=MH_RX, txpin=MH_TX)
 except OSError as err:
     log_errors("Error: %s - MHZ19 sensor init error!" % err)
-    print("Error: %s - MHZ19 sensor init error!" % err)
+    if deb_scr_a == 1:
+        print("Error: %s - MHZ19 sensor init error!" % err)
     mhz19_f = True
 
 # Display
@@ -459,7 +472,8 @@ try:
     display = DisplayMe()
 except OSError as err:
     log_errors("Error: %s - Display init error!" % err)
-    print("Error: %s - Display init error!" % err)
+    if deb_scr_a == 1:
+        print("Error: %s - Display init error!" % err)
     scr_f = True
 
 # Touch thing - future reservation to activate the screen
@@ -484,8 +498,11 @@ async def upd_status_loop():
                 rh_list.append(round(float(bmes.humidity)) + rh_corr)
                 press_list.append(round(float(bmes.pressure)) + press_corr)
                 gas_list.append(round(float(bmes.gas)))
-            except ValueError:
-                pass
+            except ValueError as err:
+                if deb_scr_a == 1:
+                    print("BME sensor loop error: %s" % err)
+                    log_errors("BME se sensor loop error" % err)
+                    pass
             if len(temp_list) >= 60:
                 temp_list.pop(0)
             if len(rh_list) >= 60:
@@ -503,14 +520,14 @@ async def upd_status_loop():
             if len(gas_list) > 1:
                 gas_average = round(sum(gas_list) / len(gas_list), 1)
             gc.collect()
-
-        gc.threshold(gc.mem_free() // 4 + gc.mem_alloc())
+            gc.threshold(gc.mem_free() // 4 + gc.mem_alloc())
         await asyncio.sleep(1)
 
 
 async def mqtt_up_l():
     global mqtt_up
     global mq_clnt
+    global config
 
     while net.net_ok is False:
         gc.collect()
@@ -530,6 +547,7 @@ async def mqtt_up_l():
             print("Soft reboot caused error %s" % e)
             await asyncio.sleep(5)
             reset()
+
         while mqtt_up is False:
             await asyncio.sleep(5)
             try:
@@ -553,14 +571,10 @@ async def mqtt_up_l():
 
 async def mqtt_pub_l():
     global last_update
-    #  Publish only valid average values.
 
     while True:
-        await asyncio.sleep(mqtt_ival)
 
-        if mqtt_up is False:
-            await asyncio.sleep(10)
-        else:
+        if (time() - last_update) >= mqtt_ival and mqtt_up is True:
             if -40 < temp_average < 120:
                 await mq_clnt.publish(temp_average, str(temp_average), retain=0, qos=0)
             if 0 < rh_average < 100:
@@ -591,6 +605,7 @@ async def mqtt_pub_l():
                 await mq_clnt.publish(t_co2, str(co2s.co2_average), retain=0, qos=0)
 
             last_update = time()
+            await asyncio.sleep(1)
 
             gc.collect()
             gc.threshold(gc.mem_free() // 4 + gc.mem_alloc())
@@ -608,15 +623,51 @@ def upd_mqtt_stat(topic, msg, retained):
 
 
 async def disp_l():
-    # Not yet complete
+
     while True:
         await display.rot_180(True)
+
+        # page 1
+
         await display.txt_2_r("  %s %s" % (resolve_date()[2], resolve_date()[0]), 0, 5)
         await display.txt_2_r("    %s" % resolve_date()[1], 1, 5)
-        await display.txt_2_r("Temp:%s" % "{:.1f}".format(temp_average), 2, 5)
-        await display.txt_2_r("Rh:%s" % "{:.1f}".format(rh_average), 3, 5)
-        await display.txt_2_r("GasR: %s " "{:.1f}".format(gas_average), 4, 5)
-        # row 5 await display.text_to_row("Alarms:%s " % alarms, 5, 5)
+        await display.txt_2_r("%sC Rh:%s" % ("{:.1f}".format(temp_average), "{:.1f}".format(rh_average)), 2, 5)
+        await display.txt_2_r("CO2:%s" % "{:.1f}".format(co2s.co2_average), 3, 5)
+        await display.txt_2_r("GasR:%s" % "{:.1f}".format(gas_average), 4, 5)
+        await display.txt_2_r("AirQuality:%s " % aq.aqinndex, 5, 5)
+        await display.act_scr()
+        await asyncio.sleep(1)
+
+        # page 2
+
+        await display.txt_2_r("PM1_0 :%s" % str(pms.pms_dictionary['PM1_0']), 0, 5)
+        await display.txt_2_r("PM2_5 :%s" % str(pms.pms_dictionary['PM1_0_ATM']), 1, 5)
+        await display.txt_2_r("PM10_0:%s" % str(pms.pms_dictionary['PM10_0']), 2, 5)
+        await display.txt_2_r("PM1_0_ATM:%s" % str(pms.pms_dictionary['PM10_0_ATM']), 3, 5)
+        await display.txt_2_r("PM2_5_ATM:%s" % str(pms.pms_dictionary['PM2_5_ATM']), 4, 5)
+        await display.txt_2_r("PM10_0_ATM:%s" % str(pms.pms_dictionary['PM10_0_ATM']), 5, 5)
+        await display.act_scr()
+        await asyncio.sleep(1)
+
+        # page 3
+
+        await display.txt_2_r("PCNT_0_3:%s" % str(pms.pms_dictionary['PCNT_0_3']), 0, 5)
+        await display.txt_2_r("PCNT_0_5:%s" % str(pms.pms_dictionary['PCNT_0_5']), 1, 5)
+        await display.txt_2_r("PCNT_1_0:%s" % str(pms.pms_dictionary['PCNT_1_0']), 2, 5)
+        await display.txt_2_r("PCNT_2_5:%s" % str(pms.pms_dictionary['PCNT_2_5']), 3, 5)
+        await display.txt_2_r("PCNT_5_0:%s" % str(pms.pms_dictionary['PCNT_5_0']), 4, 5)
+        await display.txt_2_r("PCNT_10_0:%s" % str(pms.pms_dictionary['PCNT_10_0']), 5, 5)
+        await display.act_scr()
+        await asyncio.sleep(1)
+
+        # page 4
+
+        await display.txt_2_r("WIFI:%s" % net.strength, 0, 5)
+        await display.txt_2_r("WebRepl:%s" % net.webrepl_started, 1, 5)
+        await display.txt_2_r("MQTT up:%s" % mqtt_up, 2, 5)
+        await display.txt_2_r("Broker:%s" % broker_uptime, 3, 5)
+        await display.txt_2_r("Memfree:%s" % gc.mem_free(), 4, 5)
+        await display.txt_2_r("Err:%s" % last_error, 5, 5)
         await display.act_scr()
         await asyncio.sleep(1)
 

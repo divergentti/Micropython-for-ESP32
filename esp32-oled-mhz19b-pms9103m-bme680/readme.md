@@ -5,16 +5,17 @@ Changes:
 - fixed variable and classnames
 - updated WIFICONN_AS.py
 - reworked MQTT update
-- reworked globas
+- reworked globals
+- reworked CLI monitoring
 
 Issues and not yet complete:
-- PMS9103M dictionary needs reworking, AirQuality index calculation do not get enough data
-- calibrations
+- PMS9103M seems to give a few particle counts, but nothing more. Perhaps UART issue.
+- AirQuality index calculation do not get enough data
+- Calibrations
 
+25.07.2024 first attempts to make program
 
-25.07.2024 (project waiting for new OLED display to arrive, code works partly)
-
-Case for this gadget at https://www.thingiverse.com/thing:6707670
+Enclosure and Fusion360 drawing for this gadget at https://www.thingiverse.com/thing:6707670
 
 Components:
 - 1.3 inch OLED module white/blue SPI/IIC I2C Communicate color 128X64 1.3 inch OLED LCD LED Display Module 1.3" OLED module (2.24€)
@@ -24,7 +25,9 @@ Components:
 - PMS9103M PM2.5 Laser Dust Particle Sensor Module Detects PM2S-3 Indoor Gas Air Quality Detection PMS9003M Plantower For Purifier (11.71€)
 Total about: 39€
 
-Initial code. The particle sensor, CO2 sensor and BME680 seems to work, but I broke my last OLED display and need to wait for new to arrive. Command i2c.scan() finds the display, but backlight does not illuminate.
+Initial code. The particle sensor, CO2 sensor and BME680 seems to work, but I broke my last OLED display and need to wait for new to arrive. This was not true. If asynchronous display update has errors (like Nonetype), display is black. 
+
+Command i2c.scan() finds the display, but backlight did not illuminate due to error in the code.
 [60, 119]
 
 These scripts are used for I2C connected OLED display, BME680 temperature/rh/pressure/voc sensor
@@ -42,10 +45,10 @@ PMS9103M datasheet https://evelta.com/content/datasheets/203-PMS9003M.pdf
 Pinout (ledge upwards, PIN1 = right):
 PIN1 = VCC = 5V
 PIN2 = GND
-PIN3 = SET (TTL 3.3V = normal working, GND = sleeping) = 4 *
+PIN3 = SET (TTL 3.3V = normal working, GND = sleeping) = 4 * (not needed)
 PIN4 = RXD (3.3V) = 17
 PIN5 = TXD (3.3V) = 16
-PIN6 = RESET 
+PIN6 = RESET (not needed) 
 7,8 N/C. * = pullup
 
 MH-Z19B databseet: https://www.winsen-sensor.com/d/files/infrared-gas-sensor/mh-z19b-co2-ver1_0.pdf

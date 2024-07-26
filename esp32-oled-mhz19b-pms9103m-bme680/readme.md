@@ -1,3 +1,18 @@
+26.07.2024: OLED display started working, had configuration typo. Not yet complete, but getting closer.
+
+Changes:
+- added proper error logging to a csv-file
+- fixed variable and classnames
+- updated WIFICONN_AS.py
+- reworked MQTT update
+- reworked globas
+
+Issues and not yet complete:
+- Display items
+- MQTT handshake is still problematic, causing sofboots due to OSError
+
+
+
 25.07.2024 (project waiting for new OLED display to arrive, code works partly)
 
 Case for this gadget at https://www.thingiverse.com/thing:6707670

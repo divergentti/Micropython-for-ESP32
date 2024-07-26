@@ -1,44 +1,12 @@
 """
 This script is used for I2C connected OLED display, BME680 temperature/rh/pressure/voc sensor
-MH-Z19B CO2 NDIR-sensor, PMS9103M particle sensor.
+MH-Z19B CO2 NDIR-sensor, PMS9103M particle sensor. Asynchronous code.
 
-Values could be transferred by MQTT to the MQTT broker and from the broker to the Influxdb etc.
-
-I2C for the OLED and BME680 are connected to SDA = Pin21 and SCL (SCK) = Pin22.
-Use command i2c.scan() to check which devices respond from the I2C channel.
-
-MH-Z19B and PMS9103M are connected to UART1 and UART2.
-
-PMS9103M (9003M) datasheet https://evelta.com/content/datasheets/203-PMS9003M.pdf
-
-Pinout (ledge upwards, PIN1 = right):
-PIN1 = VCC = 5V
-PIN2 = GND
-PIN3 = SET (TTL 3.3V = normal working, GND = sleeping) = 4 *
-PIN4 = RXD (3.3V) = 17
-PIN5 = TXD (3.3V) = 16
-PIN6 = RESET = 2 *
-7,8 N/C.
-
-MH-Z19B databseet: https://www.winsen-sensor.com/d/files/infrared-gas-sensor/mh-z19b-co2-ver1_0.pdf
-
-Pinout (do not use 2,3 tx/rx otherwise pytool fails):
-Vin = 5V
-GND = GND
-RX = 32
-TX = 33
-
-Program read sensor values once per second, rounds them to 1 decimal with correction values, then calculates averages.
-Averages are sent to the MQTT broker.
+See documentation at GitHub.
 
 For webrepl, remember to execute import webrepl_setup one time.
 
-Asyncronous code.
-
-
-Version 0.1 Jari Hiltunen -  xxxxxx
-
-WAITING for new OLED display, the code should work mostly
+Version 0.1 Jari Hiltunen -  26.07.2024
 """
 
 
@@ -46,7 +14,7 @@ from machine import SoftI2C, UART, Pin, freq, reset, ADC, TouchPad
 import uasyncio as asyncio
 from utime import time, mktime, localtime, sleep
 import gc
-import network
+import os
 import drivers.WIFICONN_AS as WIFINET
 import drivers.BME680 as BMES
 import drivers.SH1106 as DP
@@ -55,113 +23,216 @@ import drivers.MHZ19B_AS as CO2
 from drivers.AQI import AQI
 gc.collect()
 from json import load
-import esp32
 from drivers.MQTT_AS import MQTTClient, config
 gc.collect()
-# Globals
-mqtt_up = False
-broker_uptime = 0
-co2_average = None
-temp_average = None
-rh_average = None
-pressure_average = None
-gas_average = None
-BME_s_f = False
-MHZ19_f = False
-PMS_f = False
-scr_f = False
-last_update = time()
+
+
+def log_errors(err_in):
+    filename = "/errors.csv"
+    max_file_size_bytes = 1024  # 1KB
+
+    with open(filename, 'a+') as logf:
+        try:
+            logf.write("%s" % str(resolve_date()[0]))  # Date in local format
+            logf.write(",")
+            logf.write("%s" % str(err_in))
+            logf.write("\r\n")
+        except OSError:
+            print("Can not write to ", filename, "!")
+            raise OSError
+
+    logf.close()
+
+    # Check file size and shrink/delete if needed
+    try:
+        file_stat = os.stat(filename)
+        file_size_bytes = file_stat[6]  # Index 6 corresponds to file size
+
+        if file_size_bytes > max_file_size_bytes:
+            with open(filename, 'r') as file:
+                lines = file.readlines()
+                lines = lines[-1000:]  # Keep the last 1000 lines
+            with open(filename, 'w') as file:
+                file.writelines(lines)
+    except OSError as e:
+        if e.args[0] == 2:  # File not found error
+            # File doesn't exist, create it
+            with open(filename, 'w') as file:
+                pass  # Just create an empty file
+        else:
+            print("Error while checking/shrinking the log file.")
+            raise OSError
 
 
 try:
     f = open('parameters.py', "r")
     from parameters import I2C_SCL_PIN, I2C_SDA_PIN, MH_UART, MH_RX, MH_TX, PMS_UART, PMS_RX, PMS_TX, PMS_RESET, PMS_SET
     f.close()
-except OSError:  # open failed
-    print("parameter.py-file missing! Can not continue!")
-    raise
+except OSError as err:  # open failed
+    log_errors("Parameters: %s" % err)
+    print("Error with parameters.py: ", err)
+    raise OSError
 
 try:
     f = open('runtimeconfig.json', 'r')
     with open('runtimeconfig.json') as config_file:
         data = load(config_file)
         f.close()
-        SID1 = data['SSID1']
-        SID2 = data['SSID2']
-        PW1 = data['PASSWORD1']
-        PW2 = data['PASSWORD2']
-        MQTT_S = data['MQTT_SERVER']
-        MQTT_PWD = data['MQTT_PASSWORD']
-        MQTT_U = data['MQTT_USER']
-        MQTT_P = data['MQTT_PORT']
-        MQTT_SSL = data['MQTT_SSL']
-        MQTT_IVAL = data['MQTT_INTERVAL']
-        CLIENT_ID = data['CLIENT_ID']
-        T_ERR = data['TOPIC_ERRORS']
-        WEBREPL_PWD = data['WEBREPL_PASSWORD']
-        NTP_S = data['NTPSERVER']
-        DHCP_N = data['DHCP_NAME']
-        START_WBL = data['START_WEBREPL']
-        START_NET = data['START_NETWORK']
-        START_MQTT = data['START_MQTT']
-        S_UPD_IVAL = data['SCREEN_UPDATE_INTERVAL']
-        DEB_SCR_A = data['DEBUG_SCREEN_ACTIVE']
-        SCR_TOUT = data['SCREEN_TIMEOUT']
-        T_TEMP = data['TOPIC_TEMP']
-        TEMP_THOLD = data['TEMP_TRESHOLD']
-        TEMP_CORR = data['TEMP_CORRECTION']
-        T_RH = data['TOPIC_RH']
-        RH_THOLD = data['RH_TRESHOLD']
-        RH_CORR = data['RH_CORRECTION']
-        T_PRESS = data['TOPIC_PRESSURE']
-        PRESS_CORR = data['PRESSURE_CORRECTION']
-        PRESS_THOLD = data['PRESSURE_TRESHOLD']
-        T_GASR = data['TOPIC_RGAS']
-        GASR_CORR = data['RGAS_CORRECTION']
-        GASR_THOLD = data['RGAS_TRESHOLD']
-        T_CO2 = data['TOPIC_CO2']
-        CO2_CORR = data['CO2_CORRECTION']
-        CO2_THOLD = data['CO2_TRESHOLD']
-        T_AIRQ = data['T_AIRQ']
-        T_PM1_0 = data['T_PM1_0']
-        T_PM1_0_ATM = data['T_PM1_0_ATM']
-        T_PM2_5 = data['T_PM2_5']
-        T_PM2_5_ATM = data['T_PM2_5_ATM']
-        T_PM10_0 = data['T_PM10_0']
-        T_PM10_0_ATM = data['T_PM10_0_ATM']
-        T_PCNT_0_3 = data['T_PCNT_0_3']
-        T_PCNT_0_5 = data['T_PCNT_0_5']
-        T_PCNT_1_0 = data['T_PCNT_1_0']
-        T_PCNT_2_5 = data['T_PCNT_2_5']
-        T_PCNT_5_0 = data['T_PCNT_5_0']
-        T_PCNT_10_0 = data['T_PCNT_10_0']
-        AQ_THOLD = data['AQ_THOLD']
+        sid1 = data['SSID1']
+        sid2 = data['SSID2']
+        pw1 = data['PASSWORD1']
+        pw2 = data['PASSWORD2']
+        mqtt_s = data['MQTT_SERVER']
+        mqtt_pwd = data['MQTT_PASSWORD']
+        mqtt_u = data['MQTT_USER']
+        mqtt_p = data['MQTT_PORT']
+        mqtt_ssl = data['MQTT_SSL']
+        mqtt_ival = data['MQTT_INTERVAL']
+        client_id = data['CLIENT_ID']
+        t_err = data['TOPIC_ERRORS']
+        webrepl_pwd = data['WEBREPL_PASSWORD']
+        ntp_s = data['NTPSERVER']
+        dhcp_n = data['DHCP_NAME']
+        start_wbl = data['START_WEBREPL']
+        start_net = data['START_NETWORK']
+        start_mqtt = data['START_MQTT']
+        s_upd_ival = data['SCREEN_UPDATE_INTERVAL']
+        deb_scr_a = data['DEBUG_SCREEN_ACTIVE']
+        scr_tout = data['SCREEN_TIMEOUT']
+        t_temp = data['TOPIC_TEMP']
+        temp_thold = data['TEMP_TRESHOLD']
+        temp_corr = data['TEMP_CORRECTION']
+        t_rh = data['TOPIC_RH']
+        rh_thold = data['RH_TRESHOLD']
+        rh_corr = data['RH_CORRECTION']
+        t_press = data['TOPIC_PRESSURE']
+        press_corr = data['PRESSURE_CORRECTION']
+        press_thold = data['PRESSURE_TRESHOLD']
+        t_gasr = data['TOPIC_RGAS']
+        gasr_corr = data['RGAS_CORRECTION']
+        gasr_thold = data['RGAS_TRESHOLD']
+        t_co2 = data['TOPIC_CO2']
+        co2_corr = data['CO2_CORRECTION']
+        co2_thold = data['CO2_TRESHOLD']
+        t_airq = data['T_AIRQ']
+        t_pm1_0 = data['T_PM1_0']
+        t_pm1_0_atm = data['T_PM1_0_ATM']
+        t_pm2_5 = data['T_PM2_5']
+        t_pm2_5_atm = data['T_PM2_5_ATM']
+        t_pm10_0 = data['T_PM10_0']
+        t_pm10_0_atm = data['T_PM10_0_ATM']
+        t_pcnt_0_3 = data['T_PCNT_0_3']
+        t_pcnt_0_5 = data['T_PCNT_0_5']
+        t_pcnt_1_0 = data['T_PCNT_1_0']
+        t_pcnt_2_5 = data['T_PCNT_2_5']
+        t_pcnt_5_0 = data['T_PCNT_5_0']
+        t_pcnt_10_0 = data['T_PCNT_10_0']
+        aq_thold = data['AQ_THOLD']
+        dst_b_M = data['DST_BEGIN_M']
+        dst_b_D = data['DST_BEGIN_DAY']
+        dst_b_OCC = data['DST_BEGIN_OCC']
+        dst_b_time = data['DST_BEGIN_TIME']
+        dst_e_M = data['DST_END_M']
+        dst_e_D = data['DST_END_DAY']
+        dst_e_time = data['DST_END_TIME']
+        dst_e_OCC = data['DST_END_OCC']
+        dst_tzone = data['DST_TIMEZONE']
+
+except OSError as err:
+    log_errors("Runtime.json: %s" % err)
+    print("Error with runtime.json: ", err)
+    raise OSError
+
+# Globals
+mqtt_up = False
+broker_uptime = 0
+co2_average = 0
+temp_average = 0
+rh_average = 0
+pressure_average = 0
+gas_average = 0
+bme_s_f = False
+mhz19_f = False
+pms_f = False
+scr_f = False
+last_update = time()
+
+# For MQTT_AS
+config['server'] = mqtt_s
+config['user'] = mqtt_u
+config['password'] = mqtt_pwd
+config['port'] = mqtt_p
+config['client_id'] = client_id
+if mqtt_ssl == "True":
+    config['ssl'] = True
+else:
+    config['ssl'] = False
+mq_clnt = MQTTClient(config)
 
 
-except OSError:
-    print("Runtime parameters missing. Can not continue!")
-    sleep(30)
-    raise
+
+def weekday(year, month, day):
+    # Returns weekday. Thanks to 2DOF @ GitHub
+    t = [0, 3, 2, 5, 0, 3, 5, 1, 4, 6, 2, 4]
+    year -= month < 3
+    return (year + int(year / 4) - int(year / 100) + int(year / 400) + t[month - 1] + day) % 7
+
+
+def resolve_dst():
+    # For fucking EU idiots keeping this habit running!
+    (year, month, mdate, hour, minute, second, wday, yday) = localtime()   # supposed to be GMT/UTC
+    match_days_begin = []
+    match_days_end = []
+    # Define the DST rules for the specified time zone
+    # Replace these rules with the actual DST rules for your time zone
+    dst_rules = {
+        "begin": (dst_b_M, dst_b_D, dst_b_OCC, dst_b_time),
+        # 3 = March, 2 = last, 6 = Sunday, 3 = 03:00
+        "end": (dst_e_M, dst_e_D, dst_e_OCC, dst_e_time),   # DST end  month, day, 1=first, 2=last at 04:00.
+        # 10 = October, 2 = last, 6 = Sunday, 4 = 04:00
+        "timezone": dst_tzone,          # hours from UTC during normal (winter time)
+        "offset": 1                     # hours to be added to timezone when DST is True
+    }
+    # Iterate begin
+    if dst_rules["begin"][0] in (1, 3, 5, 7, 8, 10, 11):
+        days_in_month = 30
+    else:
+        days_in_month = 31   # February does not matter here
+    # Iterate months and find days matching criteria
+    for x in range(days_in_month):
+        if weekday(year, dst_rules["begin"][0], x) == dst_rules["begin"][1]:
+            if dst_rules["begin"][2] == 2:  # last day first in the list
+                match_days_begin.insert(0, x)
+            else:
+                match_days_begin.append(x)  # first day first in the list
+    dst_begin = mktime((year, dst_rules["begin"][0], match_days_begin[0], dst_rules["begin"][3], 0, 0,
+                        dst_rules["begin"][1], 0))
+    if dst_rules["end"][0] in (1, 3, 5, 7, 8, 10, 11):
+        days_in_month = 30
+    else:
+        days_in_month = 31   # February does not matter here
+    for x in range(days_in_month):
+        if weekday(year, dst_rules["end"][0], x) == dst_rules["end"][1]:
+            if dst_rules["end"][2] == 2:  # last day first in the list
+                match_days_end.insert(0, x)
+            else:
+                match_days_end.append(x)  # first day first in the list
+    dst_end = mktime((year, dst_rules["end"][0], match_days_end[0], dst_rules["end"][3], 0, 0, dst_rules["end"][1], 0))
+    if (mktime(localtime()) < dst_begin) or (mktime(localtime()) > dst_end):
+        return localtime(mktime(localtime()) + 3600 * dst_rules["timezone"])
+    else:
+        return localtime(mktime(localtime()) + (3600 * dst_rules["timezone"]) + (3600 * dst_rules["offset"]))
+
 
 def resolve_date():
-    # For Finland
-    (year, month, mdate, hour, minute, second, wday, yday) = localtime()
+    (year, month, mdate, hour, minute, second, wday, yday) = resolve_dst()
     weekdays = ['Ma', 'Ti', 'Ke', 'To', 'Pe', 'La', 'Su']
-    summer_march = mktime((year, 3, (14 - (int(5 * year / 4 + 1)) % 7), 1, 0, 0, 0, 0))
-    winter_december = mktime((year, 10, (7 - (int(5 * year / 4 + 1)) % 7), 1, 0, 0, 0, 0))
-    if mktime(localtime()) < summer_march:
-        dst = localtime(mktime(localtime()) + 7200)
-    elif mktime(localtime()) < winter_december:
-        dst = localtime(mktime(localtime()) + 7200)
-    else:
-        dst = localtime(mktime(localtime()) + 10800)
-    (year, month, mdate, hour, minute, second, wday, yday) = dst
     day = "%s.%s.%s" % (mdate, month, year)
     hours = "%s:%s:%s" % ("{:02d}".format(hour), "{:02d}".format(minute), "{:02d}".format(second))
     return day, hours, weekdays[wday]
 
 
-class Displayme(object):
+class DisplayMe(object):
     """ Class initialize the display and show text, using I2C """
 
     def __init__(self, width=16, rows=6, lpixels=128, kpixels=64):
@@ -243,6 +314,7 @@ class Displayme(object):
     async def strt_scr(self):
         self.scr.poweron()
 
+
 class AirQuality(object):
     def __init__(self, pmssensor):
         self.aqinndex = None
@@ -260,7 +332,7 @@ class AirQuality(object):
 
 async def mqtt_up_loop():
     global mqtt_up
-    global client
+    global mq_clnt
 
     while net.net_ok is False:
         gc.collect()
@@ -286,14 +358,14 @@ async def mqtt_up_loop():
                 if client.isconnected() is True:
                     mqtt_up = True
             except OSError as e:
-                if DEB_SCR_A == 1:
+                if deb_scr_a == 1:
                     print("MQTT error: %s" % e)
                     print("Config: %s" % config)
     n = 0
     while True:
         # await self.mqtt_subscribe()
         await asyncio.sleep(5)
-        if DEB_SCR_A == 1:
+        if deb_scr_a == 1:
             print('mqtt-publish', n)
         await client.publish('result', '{}'.format(n), qos=1)
         n += 1
@@ -304,7 +376,7 @@ async def mqtt_subscribe(client):
 
 def update_mqtt_status(topic, msg, retained):
     global broker_uptime
-    if DEB_SCR_A == 1:
+    if deb_scr_a == 1:
         print((topic, msg, retained))
     broker_uptime = msg
 
@@ -314,10 +386,10 @@ async def show_what_i_do():
 
     while True:
         print("\n1 ---------WIFI------------- 1")
-        if START_NET == 1: #net.use_ssid,
+        if start_net == 1: #net.use_ssid,
             print("   WiFi Connected %s, hotspot: hidden, signal strength: %s" % (net.net_ok,  net.strength))
             # print("   IP-address: %s, connection attempts failed %s" % (net.ip_a, net.con_att_fail))
-        if START_MQTT == 1:
+        if start_mqtt == 1:
             print("   MQTT Connected: %s, broker uptime: %s" % (mqtt_up, broker_uptime))
         print("   Memory free: %s, allocated: %s" % (gc.mem_free(), gc.mem_alloc()))
         print("2 -------SENSORDATA--------- 2")
@@ -334,11 +406,11 @@ async def show_what_i_do():
             print("   %s < 1.0 & %s < 2.5" % (pms.pms_dictionary['PCNT_1_0'], pms.pms_dictionary['PCNT_2_5']))
             print("   %s < 5.0 & %s < 10.0" % (pms.pms_dictionary['PCNT_5_0'], pms.pms_dictionary['PCNT_10_0']))
         print("3 ---------FAULTS------------- 3")
-        if BME_s_f:
+        if bme_s_f:
             print("BME680 sensor faulty!")
-        if MHZ19_f:
+        if mhz19_f:
             print("MHZ19 sensor faulty!")
-        if PMS_f:
+        if pms_f:
             print("PMS9103M sensor faulty!")
         if scr_f:
             print("Screen faulty!")
@@ -352,47 +424,50 @@ async def show_what_i_do():
 freq(80000000)
 
 # Network handshake
-net = WIFINET.ConnectWiFi(SID1, PW1, SID2, PW2, NTP_S, DHCP_N, START_WBL, WEBREPL_PWD)
-
+net = WIFINET.ConnectWiFi(sid1, pw1, sid2, pw2, ntp_s, dhcp_n, start_wbl, webrepl_pwd)
 i2c = SoftI2C(scl=Pin(I2C_SCL_PIN), sda=Pin(I2C_SDA_PIN))
 
+# BME-sensor
 try:
     bmes = BMES.BME680_I2C(i2c=i2c)
-except OSError as e:
-    raise Exception("Error: %s - BME sensor init error!" % e)
+except OSError as err:  # open failed
+    log_errors("Error: %s - BME sensor init error!" % err)
+    print("Error: %s - BME sensor init error!", err)
+    bme_s_f = True
 
 # Particle sensor
 try:
-    # Set SET to up (turn fan on)
     p_set = Pin(PMS_SET, Pin.OUT)
-    p_set.value(1)
+    p_set.value(1)   # SET-pin to up (turn fan on)
     pms = PARTS.PSensorPMS9103M(uart=PMS_UART, rxpin=PMS_RX, txpin=PMS_TX)
     aq = AirQuality(pms)
-except OSError as e:
-    # log_errors("Error: %s - Particle sensor init error!" % e)
-    print("Error: %s - Particle sensor init error!" % e)
-    PMS_f = True
+except OSError as err:
+    log_errors("Error: %s - Particle sensor init error!" % err)
+    print("Error: %s - Particle sensor init error!" % err)
+    pms_f = True
 
 # CO2 sensor
 try:
     co2s = CO2.MHZ19bCO2(uart=MH_UART, rxpin=MH_RX, txpin=MH_TX)
-except OSError as e:
-    # log_errors("Error: %s - MHZ19 sensor init error!" % e)
-    print("Error: %s - MHZ19 sensor init error!" % e)
-    MHZ19_f = True
+except OSError as err:
+    log_errors("Error: %s - MHZ19 sensor init error!" % err)
+    print("Error: %s - MHZ19 sensor init error!" % err)
+    mhz19_f = True
 
-#  OLED display
+# Display
 try:
-    display = Displayme()
-except OSError as e:
-    raise Exception("Error: %s - OLED Display init error!" % e)
+    display = DisplayMe()
+except OSError as err:
+    log_errors("Error: %s - Display init error!" % err)
+    print("Error: %s - Display init error!" % err)
+    scr_f = True
 
-# Touch thing
+# Touch thing - future reservation to activate the screen
 # touch = TouchPad(Pin(TOUCH_PIN))
 
 
 async def upd_status_loop():
-    # Other sensor loops are in their drivers
+    # Other sensor loops are in their drivers, this is for BME
     global temp_average
     global rh_average
     global pressure_average
@@ -403,11 +478,11 @@ async def upd_status_loop():
     gas_list = []
 
     while True:
-        if not BME_s_f:
+        if not bme_s_f:
             try:
-                temp_list.append(round(float(bmes.temperature)) + TEMP_CORR)
-                rh_list.append(round(float(bmes.humidity)) + RH_CORR)
-                press_list.append(round(float(bmes.pressure)) + PRESS_CORR)
+                temp_list.append(round(float(bmes.temperature)) + temp_corr)
+                rh_list.append(round(float(bmes.humidity)) + rh_corr)
+                press_list.append(round(float(bmes.pressure)) + press_corr)
                 gas_list.append(round(float(bmes.gas)))
             except ValueError:
                 pass
@@ -433,38 +508,107 @@ async def upd_status_loop():
         await asyncio.sleep(1)
 
 
-async def mqtt_publish_loop():
+async def mqtt_up_l():
+    global mqtt_up
+    global mq_clnt
+
+    while net.net_ok is False:
+        gc.collect()
+        await asyncio.sleep(5)
+
+    if net.net_ok is True:
+        config['subs_cb'] = upd_mqtt_stat
+        config['connect_coro'] = mqtt_subs
+        config['ssid'] = net.use_ssid
+        config['wifi_pw'] = net.u_pwd
+        MQTTClient.DEBUG = True
+        mq_clnt = MQTTClient(config)
+        try:
+            await mq_clnt.connect()
+        except OSError as e:
+            log_errors("WiFi connect: %s" % e)
+            print("Soft reboot caused error %s" % e)
+            await asyncio.sleep(5)
+            reset()
+        while mqtt_up is False:
+            await asyncio.sleep(5)
+            try:
+                await mq_clnt.connect()
+                if mq_clnt.isconnected() is True:
+                    mqtt_up = True
+            except OSError as e:
+                log_errors("MQTT Connect: %s" % e)
+                if deb_scr_a == 1:
+                    print("MQTT error: %s" % e)
+                    print("Config: %s" % config)
+    n = 0
+    while True:
+        # await self.mqtt_subscribe()
+        await asyncio.sleep(5)
+        if deb_scr_a == 1:
+            print('mqtt-publish', n)
+        await mq_clnt.publish('result', '{}'.format(n), qos=1)
+        n += 1
+
+
+async def mqtt_pub_l():
+    global last_update
     #  Publish only valid average values.
 
     while True:
+        await asyncio.sleep(mqtt_ival)
+
         if mqtt_up is False:
             await asyncio.sleep(10)
         else:
-            await asyncio.sleep(MQTT_IVAL)
-            if temp_average is not None:
-                if -40 < temp_average < 100:
-                    await client.publish(T_TEMP, str(temp_average), retain=0, qos=0)
-                    # float to str conversion due to MQTT_AS.py len() issue
-            if rh_average is not None:
-                if 0 < rh_average < 100:
-                    await client.publish(T_RH, str(rh_average), retain=0, qos=0)
+            if -40 < temp_average < 120:
+                await mq_clnt.publish(temp_average, str(temp_average), retain=0, qos=0)
+            if 0 < rh_average < 100:
+                await mq_clnt.publish(t_rh, str(rh_average), retain=0, qos=0)
+            if 0 < pressure_average < 5000:
+                await mq_clnt.publish(t_press, str(pressure_average), retain=0, qos=0)
+            if 0 < gas_average < 99999999999999:
+                await mq_clnt.publish(t_gasr, str(gas_average), retain=0, qos=0)
+
+            if not pms_f and (pms.pms_dictionary is not None) and ((time() - pms.startup_time) > pms.read_interval):
+                await mq_clnt.publish(t_pm1_0, str(pms.pms_dictionary['PM1_0']), retain=0, qos=0)
+                await mq_clnt.publish(t_pm1_0_atm, str(pms.pms_dictionary['PM1_0_ATM']), retain=0, qos=0)
+                await mq_clnt.publish(t_pm2_5, str(pms.pms_dictionary['PM2_5']), retain=0, qos=0)
+                await mq_clnt.publish(t_pm2_5_atm, str(pms.pms_dictionary['PM2_5_ATM']), retain=0, qos=0)
+                await mq_clnt.publish(t_pm10_0, str(pms.pms_dictionary['PM10_0']), retain=0, qos=0)
+                await mq_clnt.publish(t_pm10_0_atm, str(pms.pms_dictionary['PM10_0_ATM']), retain=0, qos=0)
+                await mq_clnt.publish(t_pcnt_0_3, str(pms.pms_dictionary['PCNT_0_3']), retain=0, qos=0)
+                await mq_clnt.publish(t_pcnt_0_5, str(pms.pms_dictionary['PCNT_0_5']), retain=0, qos=0)
+                await mq_clnt.publish(t_pcnt_1_0, str(pms.pms_dictionary['PCNT_1_0']), retain=0, qos=0)
+                await mq_clnt.publish(t_pcnt_2_5, str(pms.pms_dictionary['PCNT_2_5']), retain=0, qos=0)
+                await mq_clnt.publish(t_pcnt_5_0, str(pms.pms_dictionary['PCNT_5_0']), retain=0, qos=0)
+                await mq_clnt.publish(t_pcnt_10_0, str(pms.pms_dictionary['PCNT_10_0']), retain=0, qos=0)
+
+            if aq.aqinndex is not None:
+                await mq_clnt.publish(t_airq, str(aq.aqinndex), retain=0, qos=0)
+
+            if not mhz19_f and (co2s.co2_average is not None):
+                await mq_clnt.publish(t_co2, str(co2s.co2_average), retain=0, qos=0)
+
+            last_update = time()
+
+            gc.collect()
+            gc.threshold(gc.mem_free() // 4 + gc.mem_alloc())
+
+async def mqtt_subs(mq_client):
+    # If "mq_clnt" is missing, you get error from line 538 in MQTT_AS.py (1 given, expected 0)
+    await mq_client.subscribe('$SYS/broker/uptime', 1)
 
 
-# For MQTT_AS
-config['server'] = MQTT_S
-config['user'] = MQTT_U
-config['password'] = MQTT_PWD
-config['port'] = MQTT_P
-config['client_id'] = CLIENT_ID
-if MQTT_SSL == "True":
-    config['ssl'] = True
-else:
-    config['ssl'] = False
-client = MQTTClient(config)
-
+def upd_mqtt_stat(topic, msg, retained):
+    global bro_upt
+    if deb_scr_a == 1:
+        print((topic, msg, retained))
+    bro_upt = msg
 
 
 async def disp_l():
+    # Not yet complete
     while True:
         await display.rot_180(True)
         await display.txt_2_r("  %s %s" % (resolve_date()[2], resolve_date()[0]), 0, 5)
@@ -476,15 +620,16 @@ async def disp_l():
         await display.act_scr()
         await asyncio.sleep(1)
 
+
 async def main():
     loop = asyncio.get_event_loop()
-    if START_NET == 1:
+    if start_net == 1:
         loop.create_task(net.net_upd_loop())
-    if DEB_SCR_A == 1:
+    if deb_scr_a == 1:
         loop.create_task(show_what_i_do())
-    # if START_MQTT == 1:
-       # loop.create_task(mqtt_up_loop())
-       # loop.create_task(mqtt_publish_loop())
+    if start_mqtt == 1:
+        loop.create_task(mqtt_up_l())
+        loop.create_task(mqtt_pub_l())
     loop.create_task(pms.read_async_loop())
     loop.create_task(co2s.read_co2_loop())
     loop.create_task(aq.upd_aq_loop())

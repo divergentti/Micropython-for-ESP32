@@ -400,6 +400,7 @@ async def show_what_i_do():
             # print("   IP-address: %s, connection attempts failed %s" % (net.ip_a, net.con_att_fail))
         if start_mqtt == 1:
             print("   MQTT Connected: %s, broker uptime: %s" % (mqtt_up, broker_uptime))
+            print("   MQTT messages sent %s seconds ago. " % (time()-last_update))
         print("   Memory free: %s, allocated: %s" % (gc.mem_free(), gc.mem_alloc()))
         print("2 -------SENSORDATA--------- 2")
         if (temp_average is not None) and (rh_average is not None) and (gas_average is not None):
@@ -408,14 +409,16 @@ async def show_what_i_do():
             print("   CO2 is %s" % co2s.co2_average)
         if aq.aqinndex is not None:
             print("   AQ Index: %s" % ("{:.1f}".format(aq.aqinndex)))
-            print("   PM1:%s (%s) PM2.5:%s (%s)" % (pms.pms_dictionary['PM1_0'], pms.pms_dictionary['PM1_0_ATM'],
-                                                    pms.pms_dictionary['PM2_5'], pms.pms_dictionary['PM2_5_ATM']))
-            print("   PM10: %s (ATM: %s)" % (pms.pms_dictionary['PM10_0'], pms.pms_dictionary['PM10_0_ATM']))
-            print("   %s < 0.3 & %s <0.5 " % (pms.pms_dictionary['PCNT_0_3'], pms.pms_dictionary['PCNT_0_5']))
-            print("   %s < 1.0 & %s < 2.5" % (pms.pms_dictionary['PCNT_1_0'], pms.pms_dictionary['PCNT_2_5']))
-            print("   %s < 5.0 & %s < 10.0" % (pms.pms_dictionary['PCNT_5_0'], pms.pms_dictionary['PCNT_10_0']))
+        if isinstance(pms.pms_dictionary, dict):
+                print("   PM1:%s (%s) PM2.5:%s (%s)" % (pms.pms_dictionary['PM1_0'], pms.pms_dictionary['PM1_0_ATM'],
+                                                        pms.pms_dictionary['PM2_5'], pms.pms_dictionary['PM2_5_ATM']))
+                print("   PM10: %s (ATM: %s)" % (pms.pms_dictionary['PM10_0'], pms.pms_dictionary['PM10_0_ATM']))
+                print("   %s < 0.3 & %s <0.5 " % (pms.pms_dictionary['PCNT_0_3'], pms.pms_dictionary['PCNT_0_5']))
+                print("   %s < 1.0 & %s < 2.5" % (pms.pms_dictionary['PCNT_1_0'], pms.pms_dictionary['PCNT_2_5']))
+                print("   %s < 5.0 & %s < 10.0" % (pms.pms_dictionary['PCNT_5_0'], pms.pms_dictionary['PCNT_10_0']))
         print("3 ---------FAULTS------------- 3")
         print("   Last error: %s " % last_error)
+        print("   Last PMS frame error: %s" % pms.PMS_ERROR)
         if bme_s_f:
             print("BME680 sensor faulty!")
         if mhz19_f:
@@ -573,11 +576,11 @@ async def mqtt_pub_l():
     global last_update
 
     while True:
-        if (mqtt_up is False) or (net.net_ok is False):
+        if mqtt_up is False:
             await asyncio.sleep(1)
-        elif ((time() - last_update) >= mqtt_ival) and mqtt_up is True:
+        elif (time() - last_update) >= mqtt_ival:
             if -40 < temp_average < 120:
-                await mq_clnt.publish(temp_average, str(temp_average), retain=0, qos=0)
+                await mq_clnt.publish(t_temp, str(temp_average), retain=0, qos=0)
             if 0 < rh_average < 100:
                 await mq_clnt.publish(t_rh, str(rh_average), retain=0, qos=0)
             if 0 < pressure_average < 5000:
@@ -585,7 +588,7 @@ async def mqtt_pub_l():
             if 0 < gas_average < 99999999999999:
                 await mq_clnt.publish(t_gasr, str(gas_average), retain=0, qos=0)
 
-            if not pms_f and (pms.pms_dictionary is not None) and ((time() - pms.startup_time) > pms.read_interval):
+            if (pms.pms_dictionary is not None) and ((time() - pms.startup_time) > pms.read_interval):
                 await mq_clnt.publish(t_pm1_0, str(pms.pms_dictionary['PM1_0']), retain=0, qos=0)
                 await mq_clnt.publish(t_pm1_0_atm, str(pms.pms_dictionary['PM1_0_ATM']), retain=0, qos=0)
                 await mq_clnt.publish(t_pm2_5, str(pms.pms_dictionary['PM2_5']), retain=0, qos=0)
@@ -607,9 +610,11 @@ async def mqtt_pub_l():
 
             last_update = time()
             await asyncio.sleep(1)
-
             gc.collect()
             gc.threshold(gc.mem_free() // 4 + gc.mem_alloc())
+        else:
+            await asyncio.sleep(1)
+
 
 async def mqtt_subs(mq_client):
     # If "mq_clnt" is missing, you get error from line 538 in MQTT_AS.py (1 given, expected 0)
@@ -617,10 +622,10 @@ async def mqtt_subs(mq_client):
 
 
 def upd_mqtt_stat(topic, msg, retained):
-    global bro_upt
+    global broker_uptime
     if deb_scr_a == 1:
         print((topic, msg, retained))
-    bro_upt = msg
+    broker_uptime = msg
 
 
 async def disp_l():

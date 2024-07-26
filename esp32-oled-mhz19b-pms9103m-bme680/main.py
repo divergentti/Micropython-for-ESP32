@@ -159,7 +159,7 @@ bme_s_f = False
 mhz19_f = False
 pms_f = False
 scr_f = False
-last_update = time()
+mqtt_last_update = 0
 
 
 # For MQTT_AS
@@ -402,7 +402,8 @@ async def show_what_i_do():
             # print("   IP-address: %s, connection attempts failed %s" % (net.ip_a, net.con_att_fail))
         if start_mqtt == 1:
             print("   MQTT Connected: %s, broker uptime: %s" % (mqtt_up, broker_uptime))
-            print("   MQTT messages sent %s seconds ago. " % (time()-last_update))
+            if mqtt_up is True:
+                print("   MQTT messages sent %s seconds ago. " % (time() - mqtt_last_update))
         print("   Memory free: %s, allocated: %s" % (gc.mem_free(), gc.mem_alloc()))
         print("2 -------SENSORDATA--------- 2")
         if (temp_average is not None) and (rh_average is not None) and (gas_average is not None):
@@ -567,7 +568,7 @@ async def mqtt_up_l():
     n = 0
     while True:
         # await self.mqtt_subscribe()
-        await asyncio.sleep(mqtt_ival)
+        await asyncio.sleep(5)
         if deb_scr_a == 1:
             print('mqtt-publish test', n)
         await mq_clnt.publish('result', '{}'.format(n), qos=1)
@@ -575,12 +576,12 @@ async def mqtt_up_l():
 
 
 async def mqtt_pub_l():
-    global last_update
+    global mqtt_last_update
 
     while True:
         if mqtt_up is False:
             await asyncio.sleep(1)
-        elif (time() - last_update) >= mqtt_ival:
+        elif (time() - mqtt_last_update) >= mqtt_ival:
             if -40 < temp_average < 120:
                 await mq_clnt.publish(t_temp, str(temp_average), retain=0, qos=0)
             if 0 < rh_average < 100:
@@ -610,7 +611,8 @@ async def mqtt_pub_l():
             if not mhz19_f and (co2s.co2_average is not None):
                 await mq_clnt.publish(t_co2, str(co2s.co2_average), retain=0, qos=0)
 
-            last_update = time()
+            mqtt_last_update = time()
+
             await asyncio.sleep(1)
             gc.collect()
             gc.threshold(gc.mem_free() // 4 + gc.mem_alloc())

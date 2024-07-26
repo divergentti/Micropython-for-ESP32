@@ -24,6 +24,7 @@ from drivers.AQI import AQI
 gc.collect()
 from json import load
 from drivers.MQTT_AS import MQTTClient, config
+from machine import reset_cause
 gc.collect()
 
 last_error = None
@@ -397,9 +398,9 @@ async def show_what_i_do():
 
     while True:
         print("\n1 ---------WIFI------------- 1")
-        if start_net == 1: #net.use_ssid,
+        if start_net == 1:
             print("   WiFi Connected %s, hotspot: hidden, signal strength: %s" % (net.net_ok,  net.strength))
-            # print("   IP-address: %s, connection attempts failed %s" % (net.ip_a, net.con_att_fail))
+            print("   IP-address: %s" % net.ip_a)
         if start_mqtt == 1:
             print("   MQTT Connected: %s, broker uptime: %s" % (mqtt_up, broker_uptime))
             if mqtt_up is True:
@@ -421,7 +422,6 @@ async def show_what_i_do():
                 print("   %s < 5.0 & %s < 10.0" % (pms.pms_dictionary['PCNT_5_0'], pms.pms_dictionary['PCNT_10_0']))
         print("3 ---------FAULTS------------- 3")
         print("   Last error: %s " % last_error)
-        print("   Last PMS frame error: %s" % pms.PMS_ERROR)
         if bme_s_f:
             print("BME680 sensor faulty!")
         if mhz19_f:
@@ -437,7 +437,8 @@ async def show_what_i_do():
 
 # Adjust speed to low heat production, max 240000000, normal 160000000, min with Wi-Fi 80000000
 #  freq(240000000)
-freq(80000000)
+# freq(80000000)
+freq(160000000)
 
 # Network handshake
 net = WIFINET.ConnectWiFi(sid1, pw1, sid2, pw2, ntp_s, dhcp_n, start_wbl, webrepl_pwd)
@@ -467,11 +468,16 @@ except OSError as err:
 # CO2 sensor
 try:
     co2s = CO2.MHZ19bCO2(uart=MH_UART, rxpin=MH_RX, txpin=MH_TX)
+    if reset_cause() == 1:  # This is needed for UART init for some reason
+        del co2s
+        sleep(5)  # 2 is not enough!
+        co2s = CO2.MHZ19bCO2(uart=MH_UART, rxpin=MH_RX, txpin=MH_TX)
 except OSError as err:
     log_errors("Error: %s - MHZ19 sensor init error!" % err)
     if deb_scr_a == 1:
         print("Error: %s - MHZ19 sensor init error!" % err)
     mhz19_f = True
+
 
 # Display
 try:
@@ -655,26 +661,26 @@ async def disp_l():
         await asyncio.sleep(1)
 
         # page 2
-
-        await display.txt_2_r("PM1_0 :%s" % str(pms.pms_dictionary['PM1_0']), 0, 5)
-        await display.txt_2_r("PM2_5 :%s" % str(pms.pms_dictionary['PM1_0_ATM']), 1, 5)
-        await display.txt_2_r("PM10_0:%s" % str(pms.pms_dictionary['PM10_0']), 2, 5)
-        await display.txt_2_r("PM1_0_ATM:%s" % str(pms.pms_dictionary['PM10_0_ATM']), 3, 5)
-        await display.txt_2_r("PM2_5_ATM:%s" % str(pms.pms_dictionary['PM2_5_ATM']), 4, 5)
-        await display.txt_2_r("PM10_0_ATM:%s" % str(pms.pms_dictionary['PM10_0_ATM']), 5, 5)
-        await display.act_scr()
-        await asyncio.sleep(1)
+        if pms.pms_dictionary is not None:
+            await display.txt_2_r("PM1_0 :%s" % str(pms.pms_dictionary['PM1_0']), 0, 5)
+            await display.txt_2_r("PM2_5 :%s" % str(pms.pms_dictionary['PM1_0_ATM']), 1, 5)
+            await display.txt_2_r("PM10_0:%s" % str(pms.pms_dictionary['PM10_0']), 2, 5)
+            await display.txt_2_r("PM1_0_ATM:%s" % str(pms.pms_dictionary['PM10_0_ATM']), 3, 5)
+            await display.txt_2_r("PM2_5_ATM:%s" % str(pms.pms_dictionary['PM2_5_ATM']), 4, 5)
+            await display.txt_2_r("PM10_0_ATM:%s" % str(pms.pms_dictionary['PM10_0_ATM']), 5, 5)
+            await display.act_scr()
+            await asyncio.sleep(1)
 
         # page 3
 
-        await display.txt_2_r("PCNT_0_3:%s" % str(pms.pms_dictionary['PCNT_0_3']), 0, 5)
-        await display.txt_2_r("PCNT_0_5:%s" % str(pms.pms_dictionary['PCNT_0_5']), 1, 5)
-        await display.txt_2_r("PCNT_1_0:%s" % str(pms.pms_dictionary['PCNT_1_0']), 2, 5)
-        await display.txt_2_r("PCNT_2_5:%s" % str(pms.pms_dictionary['PCNT_2_5']), 3, 5)
-        await display.txt_2_r("PCNT_5_0:%s" % str(pms.pms_dictionary['PCNT_5_0']), 4, 5)
-        await display.txt_2_r("PCNT_10_0:%s" % str(pms.pms_dictionary['PCNT_10_0']), 5, 5)
-        await display.act_scr()
-        await asyncio.sleep(1)
+            await display.txt_2_r("PCNT_0_3:%s" % str(pms.pms_dictionary['PCNT_0_3']), 0, 5)
+            await display.txt_2_r("PCNT_0_5:%s" % str(pms.pms_dictionary['PCNT_0_5']), 1, 5)
+            await display.txt_2_r("PCNT_1_0:%s" % str(pms.pms_dictionary['PCNT_1_0']), 2, 5)
+            await display.txt_2_r("PCNT_2_5:%s" % str(pms.pms_dictionary['PCNT_2_5']), 3, 5)
+            await display.txt_2_r("PCNT_5_0:%s" % str(pms.pms_dictionary['PCNT_5_0']), 4, 5)
+            await display.txt_2_r("PCNT_10_0:%s" % str(pms.pms_dictionary['PCNT_10_0']), 5, 5)
+            await display.act_scr()
+            await asyncio.sleep(1)
 
         # page 4
 

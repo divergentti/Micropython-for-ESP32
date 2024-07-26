@@ -562,9 +562,9 @@ async def mqtt_up_l():
     n = 0
     while True:
         # await self.mqtt_subscribe()
-        await asyncio.sleep(5)
+        await asyncio.sleep(mqtt_ival)
         if deb_scr_a == 1:
-            print('mqtt-publish', n)
+            print('mqtt-publish test', n)
         await mq_clnt.publish('result', '{}'.format(n), qos=1)
         n += 1
 
@@ -573,8 +573,9 @@ async def mqtt_pub_l():
     global last_update
 
     while True:
-
-        if (time() - last_update) >= mqtt_ival and mqtt_up is True:
+        if (mqtt_up is False) or (net.net_ok is False):
+            await asyncio.sleep(1)
+        elif ((time() - last_update) >= mqtt_ival) and mqtt_up is True:
             if -40 < temp_average < 120:
                 await mq_clnt.publish(temp_average, str(temp_average), retain=0, qos=0)
             if 0 < rh_average < 100:
@@ -631,10 +632,16 @@ async def disp_l():
 
         await display.txt_2_r("  %s %s" % (resolve_date()[2], resolve_date()[0]), 0, 5)
         await display.txt_2_r("    %s" % resolve_date()[1], 1, 5)
-        await display.txt_2_r("%sC Rh:%s" % ("{:.1f}".format(temp_average), "{:.1f}".format(rh_average)), 2, 5)
-        await display.txt_2_r("CO2:%s" % "{:.1f}".format(co2s.co2_average), 3, 5)
-        await display.txt_2_r("GasR:%s" % "{:.1f}".format(gas_average), 4, 5)
-        await display.txt_2_r("AirQuality:%s " % aq.aqinndex, 5, 5)
+        if (temp_average > 0) and (rh_average > 0):
+            await display.txt_2_r("%sC Rh:%s" % ("{:.1f}".format(temp_average), "{:.1f}".format(rh_average)), 2, 5)
+        else:
+            await display.txt_2_r("Waiting values", 2, 5)
+        if co2s.co2_average is not None:
+            await display.txt_2_r("CO2:%s" % "{:.1f}".format(co2s.co2_average), 3, 5)
+        if gas_average > 0:
+            await display.txt_2_r("GasR:%s" % "{:.1f}".format(gas_average), 4, 5)
+        if aq.aqinndex is not None:
+            await display.txt_2_r("AirQuality:%s " % aq.aqinndex, 5, 5)
         await display.act_scr()
         await asyncio.sleep(1)
 

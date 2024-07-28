@@ -1,5 +1,6 @@
 28.07.2024:
 - added watchdog module to check if values do not change (= sensor seems to be ok, but values not)
+- added reboot in case net.ok and time not in sync (time less than this day)
 - added UART re-inits (del co2s and pms objects and re-create) in case of cold boot
 
 26.07.2024: OLED display started working, had configuration typo. Not yet complete, but getting closer.

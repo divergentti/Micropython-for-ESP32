@@ -6,11 +6,10 @@ See documentation at GitHub.
 
 For webrepl, remember to execute import webrepl_setup one time.
 
-Version 0.1 Jari Hiltunen -  26.07.2024
+Version 0.2 Jari Hiltunen -  28.07.2024
 """
-
-
-from machine import SoftI2C, UART, Pin, freq, reset, ADC, TouchPad
+import json
+from machine import SoftI2C, Pin, freq, reset, ADC, TouchPad
 import uasyncio as asyncio
 from utime import time, mktime, localtime, sleep
 import gc
@@ -21,13 +20,13 @@ import drivers.SH1106 as DP
 import drivers.PMS9103M_AS as PARTS
 import drivers.MHZ19B_AS as CO2
 from drivers.AQI import AQI
-gc.collect()
 from json import load
 from drivers.MQTT_AS import MQTTClient, config
 from machine import reset_cause
 gc.collect()
 
 last_error = None
+
 
 def log_errors(err_in):
     global last_error
@@ -71,7 +70,7 @@ def log_errors(err_in):
 
 try:
     f = open('parameters.py', "r")
-    from parameters import I2C_SCL_PIN, I2C_SDA_PIN, MH_UART, MH_RX, MH_TX, PMS_UART, PMS_RX, PMS_TX, PMS_RESET, PMS_SET
+    from parameters import I2C_SCL_PIN, I2C_SDA_PIN, MH_UART, MH_RX, MH_TX, PMS_UART, PMS_RX, PMS_TX
     f.close()
 except OSError as err:  # open failed
     log_errors("Parameters: %s" % err)
@@ -174,7 +173,6 @@ if mqtt_ssl == "True":
 else:
     config['ssl'] = False
 mq_clnt = MQTTClient(config)
-
 
 
 def weekday(year, month, day):
@@ -322,7 +320,6 @@ class DisplayMe(object):
         self.scr.poweron()
 
 
-
 class AirQuality(object):
     def __init__(self, pmssensor):
         self.aqinndex = None
@@ -414,12 +411,12 @@ async def show_what_i_do():
         if aq.aqinndex is not None:
             print("   AQ Index: %s" % ("{:.1f}".format(aq.aqinndex)))
         if isinstance(pms.pms_dictionary, dict):
-                print("   PM1:%s (%s) PM2.5:%s (%s)" % (pms.pms_dictionary['PM1_0'], pms.pms_dictionary['PM1_0_ATM'],
-                                                        pms.pms_dictionary['PM2_5'], pms.pms_dictionary['PM2_5_ATM']))
-                print("   PM10: %s (ATM: %s)" % (pms.pms_dictionary['PM10_0'], pms.pms_dictionary['PM10_0_ATM']))
-                print("   %s < 0.3 & %s <0.5 " % (pms.pms_dictionary['PCNT_0_3'], pms.pms_dictionary['PCNT_0_5']))
-                print("   %s < 1.0 & %s < 2.5" % (pms.pms_dictionary['PCNT_1_0'], pms.pms_dictionary['PCNT_2_5']))
-                print("   %s < 5.0 & %s < 10.0" % (pms.pms_dictionary['PCNT_5_0'], pms.pms_dictionary['PCNT_10_0']))
+            print("   PM1:%s (%s) PM2.5:%s (%s)" % (pms.pms_dictionary['PM1_0'], pms.pms_dictionary['PM1_0_ATM'],
+                                                    pms.pms_dictionary['PM2_5'], pms.pms_dictionary['PM2_5_ATM']))
+            print("   PM10: %s (ATM: %s)" % (pms.pms_dictionary['PM10_0'], pms.pms_dictionary['PM10_0_ATM']))
+            print("   %s < 0.3 & %s <0.5 " % (pms.pms_dictionary['PCNT_0_3'], pms.pms_dictionary['PCNT_0_5']))
+            print("   %s < 1.0 & %s < 2.5" % (pms.pms_dictionary['PCNT_1_0'], pms.pms_dictionary['PCNT_2_5']))
+            print("   %s < 5.0 & %s < 10.0" % (pms.pms_dictionary['PCNT_5_0'], pms.pms_dictionary['PCNT_10_0']))
         print("3 ---------FAULTS------------- 3")
         print("   Last error: %s " % last_error)
         if bme_s_f:
@@ -437,8 +434,8 @@ async def show_what_i_do():
 
 # Adjust speed to low heat production, max 240000000, normal 160000000, min with Wi-Fi 80000000
 #  freq(240000000)
-# freq(80000000)
-freq(160000000)
+freq(80000000)
+# freq(160000000)
 
 # Network handshake
 net = WIFINET.ConnectWiFi(sid1, pw1, sid2, pw2, ntp_s, dhcp_n, start_wbl, webrepl_pwd)
@@ -455,9 +452,10 @@ except OSError as err:  # open failed
 
 # Particle sensor
 try:
-    p_set = Pin(PMS_SET, Pin.OUT)
-    p_set.value(1)   # SET-pin to up (turn fan on)
     pms = PARTS.PSensorPMS9103M(uart=PMS_UART, rxpin=PMS_RX, txpin=PMS_TX)
+    if reset_cause() == 1:
+        del pms
+        pms = PARTS.PSensorPMS9103M(uart=PMS_UART, rxpin=PMS_RX, txpin=PMS_TX)
     aq = AirQuality(pms)
 except OSError as err:
     log_errors("Error: %s - Particle sensor init error!" % err)
@@ -468,7 +466,7 @@ except OSError as err:
 # CO2 sensor
 try:
     co2s = CO2.MHZ19bCO2(uart=MH_UART, rxpin=MH_RX, txpin=MH_TX)
-    if reset_cause() == 1:  # This is needed for UART init for some reason
+    if reset_cause() == 1:
         del co2s
         sleep(5)  # 2 is not enough!
         co2s = CO2.MHZ19bCO2(uart=MH_UART, rxpin=MH_RX, txpin=MH_TX)
@@ -694,6 +692,71 @@ async def disp_l():
         await asyncio.sleep(1)
 
 
+async def watchdog():
+    #  Keep system up and running, else reboot and try to recover
+    bme_fail = 0
+    pms_fail = 0
+    mhz_fail = 0
+    l_temp = 0
+    l_rh = 0
+    l_pressure = 0
+    l_rgas = 0
+    l_co2 = 0
+    l_aqi = 0
+
+    while True:
+
+        if not bme_s_f:
+            l_temp = bmes.temperature
+            l_rh = bmes.humidity
+            l_pressure = bmes.pressure
+            l_rgas = bmes.gas
+        if not mhz19_f:
+            l_co2 = co2s.co2_value
+        if not pms_f:
+            l_aqi = aq.aqinndex
+
+        await asyncio.sleep(mqtt_ival * 10)  # Interval for the watchdoc comparison (10 min)
+
+        if net.net_ok and (time() < 775489240):
+            log_errors("Time not synchronized!")
+            if deb_scr_a == 1:
+                print("Time not synchronized!")
+            reset()
+
+        if not bme_s_f:
+            if l_temp == bmes.temperature:
+                bme_fail += 1
+            elif l_rh == bmes.humidity:
+                bme_fail += 1
+            elif l_pressure == bmes.pressure:
+                bme_fail += 1
+            elif l_rgas == bmes.gas:
+                bme_fail += 1
+        if not mhz19_f:
+            if l_co2 == co2s.co2_value:
+                mhz_fail += 1
+        if not pms_f:
+            if l_aqi == aq.aqinndex:
+                pms_fail += 1
+
+        if bme_fail >= 4:
+            log_errors("BME keeps failing, resetting")
+            if deb_scr_a == 1:
+                print("Time not synchronized!")
+            reset()
+        elif mhz_fail >= 1:
+            log_errors("MH-Z19B keeps failing, resetting")
+            if deb_scr_a == 1:
+                print("Time not synchronized!")
+            reset()
+        elif pms_fail >= 1:
+            log_errors("PMS keeps failing, resetting")
+            if deb_scr_a == 1:
+                print("Time not synchronized!")
+            reset()
+
+
 async def main():
     loop = asyncio.get_event_loop()
     if start_net == 1:
@@ -708,10 +771,8 @@ async def main():
     loop.create_task(aq.upd_aq_loop())
     loop.create_task(upd_status_loop())
     loop.create_task(disp_l())
+    loop.create_task(watchdog())
     loop.run_forever()
 
 if __name__ == "__main__":
-    try:
-        asyncio.run(main())
-    except MemoryError:
-        reset()
+    asyncio.run(main())

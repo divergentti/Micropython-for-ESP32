@@ -9,6 +9,3 @@ MH_TX = 33
 PMS_UART = 1
 PMS_RX = 16
 PMS_TX = 17
-# pullup pins, do not use pin 2
-PMS_RESET = 2
-PMS_SET = 4

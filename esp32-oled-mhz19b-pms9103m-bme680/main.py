@@ -23,6 +23,8 @@ from drivers.AQI import AQI
 from json import load
 from drivers.MQTT_AS import MQTTClient, config
 from machine import reset_cause
+import ntptime
+import webrepl
 gc.collect()
 
 last_error = None
@@ -718,11 +720,23 @@ async def watchdog():
 
         await asyncio.sleep(mqtt_ival * 10)  # Interval for the watchdoc comparison (10 min)
 
-        if net.net_ok and (time() < 775489240):
-            log_errors("Time not synchronized!")
-            if deb_scr_a == 1:
-                print("Time not synchronized!")
-            reset()
+        if (net.net_ok is True) and (time() < 775489240):
+            try:
+                ntptime.settime()
+            except OSError as err:
+                log_errors("%s Time not synchronized!" % err)
+                if deb_scr_a == 1:
+                    print("Time not synchronized!")
+                reset()
+
+        if (start_wbl is True) and (net.webrepl_started is False):
+            try:
+                webrepl.start()
+                net.webrepl_started = True
+            except OSError as err:
+                log_errors("%s WebRepl does not start!" % err)
+                if deb_scr_a == 1:
+                    print("WebRepl does not start!")
 
         if not bme_s_f:
             if l_temp == bmes.temperature:

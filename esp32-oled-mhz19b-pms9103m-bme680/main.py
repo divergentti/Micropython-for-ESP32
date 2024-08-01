@@ -6,7 +6,7 @@ See documentation at GitHub.
 
 For webrepl, remember to execute import webrepl_setup one time.
 
-Version 0.2 Jari Hiltunen -  28.07.2024
+Version 0.3 Jari Hiltunen -  1.8.2024
 """
 import json
 from machine import SoftI2C, Pin, freq, reset, ADC, TouchPad
@@ -24,7 +24,6 @@ from json import load
 from drivers.MQTT_AS import MQTTClient, config
 from machine import reset_cause
 gc.collect()
-
 last_error = None
 
 
@@ -160,6 +159,7 @@ mhz19_f = False
 pms_f = False
 scr_f = False
 mqtt_last_update = 0
+read_errors = 0
 
 
 # For MQTT_AS
@@ -398,6 +398,8 @@ async def show_what_i_do():
         if start_net == 1:
             print("   WiFi Connected %s, hotspot: hidden, signal strength: %s" % (net.net_ok,  net.strength))
             print("   IP-address: %s" % net.ip_a)
+            if net.startup_time is not None:
+                print("   Runtime: %s" % (time()-net.startup_time))
         if start_mqtt == 1:
             print("   MQTT Connected: %s, broker uptime: %s" % (mqtt_up, broker_uptime))
             if mqtt_up is True:
@@ -418,7 +420,8 @@ async def show_what_i_do():
             print("   %s < 1.0 & %s < 2.5" % (pms.pms_dictionary['PCNT_1_0'], pms.pms_dictionary['PCNT_2_5']))
             print("   %s < 5.0 & %s < 10.0" % (pms.pms_dictionary['PCNT_5_0'], pms.pms_dictionary['PCNT_10_0']))
         print("3 ---------FAULTS------------- 3")
-        print("   Last error: %s " % last_error)
+        print("   Last error : %s " % last_error)
+        print("   Read errors: %s" % read_errors)
         if bme_s_f:
             print("BME680 sensor faulty!")
         if mhz19_f:
@@ -496,6 +499,7 @@ async def upd_status_loop():
     global rh_average
     global pressure_average
     global gas_average
+    global read_errors
     temp_list = []
     rh_list = []
     press_list = []
@@ -509,10 +513,10 @@ async def upd_status_loop():
                 press_list.append(round(float(bmes.pressure)) + press_corr)
                 gas_list.append(round(float(bmes.gas)))
             except ValueError as err:
+                read_errors = +1
                 if deb_scr_a == 1:
                     print("BME sensor loop error: %s" % err)
                     log_errors("BME se sensor loop error" % err)
-                    pass
             if len(temp_list) >= 60:
                 temp_list.pop(0)
             if len(rh_list) >= 60:
@@ -637,16 +641,28 @@ def upd_mqtt_stat(topic, msg, retained):
 
 
 async def disp_l():
+    # If display is black, check this function
+    await display.rot_180(True)
 
     while True:
-        await display.rot_180(True)
+
+        if ((temp_average is not None and temp_average > temp_thold) or
+                (rh_average is not None and rh_average > rh_thold) or
+                (pressure_average is not None and pressure_average > press_thold) or
+                (gas_average is not None and gas_average > gasr_thold) or
+                (co2_average is not None and co2_average > co2_thold) or
+                (aq.aqinndex is not None and aq.aqinndex > aq_thold)):
+            display.inverse = True
+        else:
+            display.inverse = False
 
         # page 1
 
         await display.txt_2_r("  %s %s" % (resolve_date()[2], resolve_date()[0]), 0, 5)
         await display.txt_2_r("    %s" % resolve_date()[1], 1, 5)
         if (temp_average > 0) and (rh_average > 0):
-            await display.txt_2_r("%sC Rh:%s" % ("{:.1f}".format(temp_average), "{:.1f}".format(rh_average)), 2, 5)
+            await display.txt_2_r("%sC Rh:%s hPa:%s" % ("{:.1f}".format(temp_average), "{:.1f}".format(rh_average),
+                                                        "{:.1f}".format(pressure_average)), 2, 5)
         else:
             await display.txt_2_r("Waiting values", 2, 5)
         if co2s.co2_average is not None:
@@ -654,100 +670,93 @@ async def disp_l():
         if gas_average > 0:
             await display.txt_2_r("GasR:%s" % "{:.1f}".format(gas_average), 4, 5)
         if aq.aqinndex is not None:
-            await display.txt_2_r("AirQuality:%s " % aq.aqinndex, 5, 5)
+            await display.txt_2_r("Air Quality Index:%s " % aq.aqinndex, 5, 5)
         await display.act_scr()
         await asyncio.sleep(1)
 
         # page 2
         if pms.pms_dictionary is not None:
-            await display.txt_2_r("PM1_0 :%s" % str(pms.pms_dictionary['PM1_0']), 0, 5)
-            await display.txt_2_r("PM2_5 :%s" % str(pms.pms_dictionary['PM1_0_ATM']), 1, 5)
-            await display.txt_2_r("PM10_0:%s" % str(pms.pms_dictionary['PM10_0']), 2, 5)
-            await display.txt_2_r("PM1_0_ATM:%s" % str(pms.pms_dictionary['PM10_0_ATM']), 3, 5)
-            await display.txt_2_r("PM2_5_ATM:%s" % str(pms.pms_dictionary['PM2_5_ATM']), 4, 5)
-            await display.txt_2_r("PM10_0_ATM:%s" % str(pms.pms_dictionary['PM10_0_ATM']), 5, 5)
+            await display.txt_2_r("Particles ug/m3", 0, 5)
+            await display.txt_2_r("PM1.0:%s ATM:%s" % (str(pms.pms_dictionary['PM1_0']), str(pms.pms_dictionary['PM1_0_ATM'])), 2, 5)
+            await display.txt_2_r("PM2.5:%s ATM:%s" % (str(pms.pms_dictionary['PM2_5']), str(pms.pms_dictionary['PM2_5_ATM'])), 3, 5)
+            await display.txt_2_r("PM10: %s ATM:%s" % (str(pms.pms_dictionary['PM10_0']), str(pms.pms_dictionary['PM10_0_ATM'])), 4, 5)
             await display.act_scr()
             await asyncio.sleep(1)
 
         # page 3
 
-            await display.txt_2_r("PCNT_0_3:%s" % str(pms.pms_dictionary['PCNT_0_3']), 0, 5)
-            await display.txt_2_r("PCNT_0_5:%s" % str(pms.pms_dictionary['PCNT_0_5']), 1, 5)
-            await display.txt_2_r("PCNT_1_0:%s" % str(pms.pms_dictionary['PCNT_1_0']), 2, 5)
-            await display.txt_2_r("PCNT_2_5:%s" % str(pms.pms_dictionary['PCNT_2_5']), 3, 5)
-            await display.txt_2_r("PCNT_5_0:%s" % str(pms.pms_dictionary['PCNT_5_0']), 4, 5)
-            await display.txt_2_r("PCNT_10_0:%s" % str(pms.pms_dictionary['PCNT_10_0']), 5, 5)
+            await display.txt_2_r("Particle counts", 0, 5)
+            await display.txt_2_r("0.5: %s 1.0:%s" % (str(pms.pms_dictionary['PCNT_0_5']), str(pms.pms_dictionary['PCNT_1_0'])), 2, 5)
+            await display.txt_2_r("2.5: %s 5.0:%s" % (str(pms.pms_dictionary['PCNT_2_5']), str(pms.pms_dictionary['PCNT_5_0'])), 3, 5)
+            await display.txt_2_r("10.0:%s" % str(pms.pms_dictionary['PCNT_10_0']), 4, 5)
+            if (net.net_ok is True) and (net.startup_time is not None):
+                await display.txt_2_r("Runtime: %s s" % (time()-net.startup_time), 5, 5)
             await display.act_scr()
             await asyncio.sleep(1)
 
         # page 4
 
-        await display.txt_2_r("WIFI:%s" % net.strength, 0, 5)
+        await display.txt_2_r("WIFI:   %s" % net.strength, 0, 5)
         await display.txt_2_r("WebRepl:%s" % net.webrepl_started, 1, 5)
         await display.txt_2_r("MQTT up:%s" % mqtt_up, 2, 5)
-        await display.txt_2_r("Broker:%s" % broker_uptime, 3, 5)
-        await display.txt_2_r("Memfree:%s" % gc.mem_free(), 4, 5)
-        await display.txt_2_r("Err:%s" % last_error, 5, 5)
+        await display.txt_2_r("ReadErr:%s" % read_errors, 3, 5)
+        await display.txt_2_r("Err:%s" % last_error, 4, 5)
+        await display.txt_2_r("Memfree:%s" % gc.mem_free(), 5, 5)
         await display.act_scr()
         await asyncio.sleep(1)
 
 
 async def watchdog():
     #  Keep system up and running, else reboot and try to recover
-    bme_fail = 0
-    pms_fail = 0
-    mhz_fail = 0
-    l_temp = 0
-    l_rh = 0
-    l_pressure = 0
-    l_rgas = 0
-    l_co2 = 0
-    l_aqi = 0
+    global read_errors
+    last_temp = temp_average
+    last_rh = rh_average
+    last_press = pressure_average
+    last_gas = gas_average
+    if pms.pms_dictionary is not None:
+        last_part_1 = pms.pms_dictionary['PM1_0']
+    else:
+        last_part_1 = 0
+    last_co2 = co2_average
 
     while True:
+        await asyncio.sleep(30 * 60)  # 30 minutes
 
-        if not bme_s_f:
-            l_temp = bmes.temperature
-            l_rh = bmes.humidity
-            l_pressure = bmes.pressure
-            l_rgas = bmes.gas
-        if not mhz19_f:
-            l_co2 = co2s.co2_value
-        if not pms_f:
-            l_aqi = aq.aqinndex
+        if temp_average == last_temp:
+            read_errors += 1
+        else:
+            last_temp = temp_average
 
-        await asyncio.sleep(mqtt_ival * 10)  # Interval for the watchdoc comparison (10 min)
+        if rh_average == last_rh:
+            read_errors += 1
+        else:
+            last_rh = rh_average
 
-        if not bme_s_f:
-            if l_temp == bmes.temperature:
-                bme_fail += 1
-            elif l_rh == bmes.humidity:
-                bme_fail += 1
-            elif l_pressure == bmes.pressure:
-                bme_fail += 1
-            elif l_rgas == bmes.gas:
-                bme_fail += 1
-        if not mhz19_f:
-            if l_co2 == co2s.co2_value:
-                mhz_fail += 1
-        if not pms_f:
-            if l_aqi == aq.aqinndex:
-                pms_fail += 1
+        if pressure_average == last_press:
+            read_errors += 1
+        else:
+            last_press = pressure_average
 
-        if bme_fail >= 4:
-            log_errors("BME keeps failing, resetting")
+        if gas_average == last_gas:
+            read_errors += 1
+        else:
+            last_gas = gas_average
+
+        if pms.pms_dictionary['PM1_0'] == last_part_1:
+            read_errors += 1
+        else:
+            last_part_1 = pms.pms_dictionary['PM1_0']
+
+        if co2_average == last_co2:
+            read_errors += 1
+        else:
+            last_co2 = co2_average
+
+        if read_errors >= 60:
+            log_errors("Sensor read errors exceeded 60, rebooting")
             if deb_scr_a == 1:
-                print("Time not synchronized!")
-            reset()
-        elif mhz_fail >= 1:
-            log_errors("MH-Z19B keeps failing, resetting")
-            if deb_scr_a == 1:
-                print("Time not synchronized!")
-            reset()
-        elif pms_fail >= 1:
-            log_errors("PMS keeps failing, resetting")
-            if deb_scr_a == 1:
-                print("Time not synchronized!")
+                print("Sensor read errors exceeded 60, rebooting")
+            await asyncio.sleep(10)
             reset()
 
 

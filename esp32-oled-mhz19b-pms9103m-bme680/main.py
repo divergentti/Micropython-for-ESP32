@@ -665,10 +665,10 @@ async def disp_l():
         else:
             await display.txt_2_r("Waiting values", 2, 5)
         if (co2s.co2_average is not None) and (pressure_average > 0):
-            await display.txt_2_r("CO2:%s hPa:%s" % ("{:.1f}".format(co2s.co2_average),
-                                                     "{:.1f}".format(pressure_average)), 3, 5)
+            await display.txt_2_r("CO2:%s hPa:%s" % (int(co2s.co2_average),
+                                                     int(pressure_average)), 3, 5)
         if gas_average > 0:
-            await display.txt_2_r("GasR:%s" % "{:.1f}".format(gas_average), 4, 5)
+            await display.txt_2_r("GasR:%s" % (int(gas_average)), 4, 5)
         if aq.aqinndex is not None:
             await display.txt_2_r("Air Quality Index:%s " % aq.aqinndex, 5, 5)
         await display.act_scr()

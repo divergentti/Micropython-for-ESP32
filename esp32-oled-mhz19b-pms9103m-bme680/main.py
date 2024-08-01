@@ -149,7 +149,6 @@ except OSError as err:
 # Globals
 mqtt_up = False
 broker_uptime = 0
-co2_average = 0
 temp_average = 0
 rh_average = 0
 pressure_average = 0
@@ -650,7 +649,7 @@ async def disp_l():
                 (rh_average is not None and rh_average > rh_thold) or
                 (pressure_average is not None and pressure_average > press_thold) or
                 (gas_average is not None and gas_average > gasr_thold) or
-                (co2_average is not None and co2_average > co2_thold) or
+                (co2s.co2_average is not None and co2s.co2_average > co2_thold) or
                 (aq.aqinndex is not None and aq.aqinndex > aq_thold)):
             display.inverse = True
         else:
@@ -661,12 +660,13 @@ async def disp_l():
         await display.txt_2_r("  %s %s" % (resolve_date()[2], resolve_date()[0]), 0, 5)
         await display.txt_2_r("    %s" % resolve_date()[1], 1, 5)
         if (temp_average > 0) and (rh_average > 0):
-            await display.txt_2_r("%sC Rh:%s hPa:%s" % ("{:.1f}".format(temp_average), "{:.1f}".format(rh_average),
-                                                        "{:.1f}".format(pressure_average)), 2, 5)
+            await display.txt_2_r("%sC Rh:%s" % ("{:.1f}".format(temp_average),
+                                                 "{:.1f}".format(rh_average),), 2, 5)
         else:
             await display.txt_2_r("Waiting values", 2, 5)
-        if co2s.co2_average is not None:
-            await display.txt_2_r("CO2:%s" % "{:.1f}".format(co2s.co2_average), 3, 5)
+        if (co2s.co2_average is not None) and (pressure_average > 0):
+            await display.txt_2_r("CO2:%s hPa:%s" % ("{:.1f}".format(co2s.co2_average),
+                                                     "{:.1f}".format(pressure_average)), 3, 5)
         if gas_average > 0:
             await display.txt_2_r("GasR:%s" % "{:.1f}".format(gas_average), 4, 5)
         if aq.aqinndex is not None:
@@ -717,7 +717,10 @@ async def watchdog():
         last_part_1 = pms.pms_dictionary['PM1_0']
     else:
         last_part_1 = 0
-    last_co2 = co2_average
+    if co2s.co2_average is not None:
+        last_co2 = co2s.co2_average
+    else:
+        last_co2 = 0
 
     while True:
         await asyncio.sleep(30 * 60)  # 30 minutes
@@ -747,10 +750,11 @@ async def watchdog():
         else:
             last_part_1 = pms.pms_dictionary['PM1_0']
 
-        if co2_average == last_co2:
-            read_errors += 1
-        else:
-            last_co2 = co2_average
+        if co2s.co2_average is not None:
+            if co2s.co2_average == last_co2:
+                read_errors += 1
+            else:
+                last_co2 = co2s.co2_average
 
         if read_errors >= 60:
             log_errors("Sensor read errors exceeded 60, rebooting")

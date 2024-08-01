@@ -1,3 +1,6 @@
+1.8.2024:
+- reworked watchdog and display items
+
 28.07.2024:
 - added watchdog module to check if values do not change (= sensor seems to be ok, but values not)
 - added UART re-inits (del co2s and pms objects and re-create) in case of cold boot

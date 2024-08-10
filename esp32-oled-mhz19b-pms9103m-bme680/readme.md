@@ -1,3 +1,11 @@
+10.8.2024:
+- added startup timer to PMS9103M_AS.py
+- fixed parameters.py UART ports
+- reorganized sensor init etc in main.py, checking is air quality index starts working now ... for some reason very low particle readings
+
+1.8-10.8.2024:
+- no single crash except air quality index did not show up = PMS9103M reading issues.
+
 1.8.2024:
 - reworked watchdog and display items
 

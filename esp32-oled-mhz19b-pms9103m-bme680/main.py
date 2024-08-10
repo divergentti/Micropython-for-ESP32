@@ -6,7 +6,7 @@ See documentation at GitHub.
 
 For webrepl, remember to execute import webrepl_setup one time.
 
-Version 0.3 Jari Hiltunen -  1.8.2024
+Version 0.31 Jari Hiltunen -  10.8.2024
 """
 import json
 from machine import SoftI2C, Pin, freq, reset, ADC, TouchPad

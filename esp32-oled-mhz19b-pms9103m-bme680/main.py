@@ -26,6 +26,8 @@ from machine import reset_cause
 gc.collect()
 last_error = None
 
+if reset_cause() == 1:  # we do this for some UART issues
+    reset()
 
 def log_errors(err_in):
     global last_error
@@ -439,6 +441,16 @@ async def show_what_i_do():
 freq(80000000)
 # freq(160000000)
 
+# Particle sensor - keep this first!
+try:
+    pms = PARTS.PSensorPMS9103M(uart=PMS_UART, rxpin=PMS_RX, txpin=PMS_TX)
+    aq = AirQuality(pms)
+except OSError as err:
+    log_errors("Error: %s - Particle sensor init error!" % err)
+    if deb_scr_a == 1:
+        print("Error: %s - Particle sensor init error!" % err)
+    pms_f = True
+
 # Network handshake
 net = WIFINET.ConnectWiFi(sid1, pw1, sid2, pw2, ntp_s, dhcp_n, start_wbl, webrepl_pwd)
 i2c = SoftI2C(scl=Pin(I2C_SCL_PIN), sda=Pin(I2C_SDA_PIN))
@@ -452,26 +464,10 @@ except OSError as err:  # open failed
         print("Error: %s - BME sensor init error!", err)
     bme_s_f = True
 
-# Particle sensor
-try:
-    pms = PARTS.PSensorPMS9103M(uart=PMS_UART, rxpin=PMS_RX, txpin=PMS_TX)
-    if reset_cause() == 1:
-        del pms
-        pms = PARTS.PSensorPMS9103M(uart=PMS_UART, rxpin=PMS_RX, txpin=PMS_TX)
-    aq = AirQuality(pms)
-except OSError as err:
-    log_errors("Error: %s - Particle sensor init error!" % err)
-    if deb_scr_a == 1:
-        print("Error: %s - Particle sensor init error!" % err)
-    pms_f = True
 
 # CO2 sensor
 try:
     co2s = CO2.MHZ19bCO2(uart=MH_UART, rxpin=MH_RX, txpin=MH_TX)
-    if reset_cause() == 1:
-        del co2s
-        sleep(5)  # 2 is not enough!
-        co2s = CO2.MHZ19bCO2(uart=MH_UART, rxpin=MH_RX, txpin=MH_TX)
 except OSError as err:
     log_errors("Error: %s - MHZ19 sensor init error!" % err)
     if deb_scr_a == 1:
@@ -670,7 +666,7 @@ async def disp_l():
         if gas_average > 0:
             await display.txt_2_r("GasR:%s" % (int(gas_average)), 4, 5)
         if aq.aqinndex is not None:
-            await display.txt_2_r("Air Quality Index:%s " % aq.aqinndex, 5, 5)
+            await display.txt_2_r("AQIndex:%s" % aq.aqinndex, 5, 5)
         await display.act_scr()
         await asyncio.sleep(1)
 
@@ -680,6 +676,7 @@ async def disp_l():
             await display.txt_2_r("PM1.0:%s ATM:%s" % (str(pms.pms_dictionary['PM1_0']), str(pms.pms_dictionary['PM1_0_ATM'])), 2, 5)
             await display.txt_2_r("PM2.5:%s ATM:%s" % (str(pms.pms_dictionary['PM2_5']), str(pms.pms_dictionary['PM2_5_ATM'])), 3, 5)
             await display.txt_2_r("PM10: %s ATM:%s" % (str(pms.pms_dictionary['PM10_0']), str(pms.pms_dictionary['PM10_0_ATM'])), 4, 5)
+            await display.txt_2_r("PMErr:%s" % str(pms.pms_dictionary['ERROR']), 5, 5)
             await display.act_scr()
             await asyncio.sleep(1)
 
@@ -690,7 +687,7 @@ async def disp_l():
             await display.txt_2_r("2.5: %s 5.0:%s" % (str(pms.pms_dictionary['PCNT_2_5']), str(pms.pms_dictionary['PCNT_5_0'])), 3, 5)
             await display.txt_2_r("10.0:%s" % str(pms.pms_dictionary['PCNT_10_0']), 4, 5)
             if (net.net_ok is True) and (net.startup_time is not None):
-                await display.txt_2_r("Runtime: %s s" % (time()-net.startup_time), 5, 5)
+                await display.txt_2_r("Runtime: %s m" % int((time()-net.startup_time)/60), 5, 5)
             await display.act_scr()
             await asyncio.sleep(1)
 

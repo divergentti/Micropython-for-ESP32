@@ -38,7 +38,7 @@ class PSensorPMS9103M:
         self.sensor = UART(uart, baudrate=9600, bits=8, parity=None, stop=1, rx=rxpin, tx=txpin)
         self.pms_dictionary = None
         self.startup_time = utime.time()
-        self.read_interval = 30
+        self.read_interval = 10
 
     async def reader(self, chars):
         port = asyncio.StreamReader(self.sensor)
@@ -61,6 +61,9 @@ class PSensorPMS9103M:
     async def read_async_loop(self):
 
         while True:
+
+            if (utime.time() - self.startup_time) < 60:  # Sensor uptime
+                await asyncio.sleep(1)
 
             first_byte = await self.reader(1)
             if not self._assert_byte(first_byte, PSensorPMS9103M.START_BYTE_1):

@@ -33,31 +33,38 @@ class PSensorPMS9103M:
         checksum = sum(command) & 0xFFFF  # ensure it's a 16-bit sum
         return checksum
 
+    async def writer(self, data):
+        port = asyncio.StreamWriter(self.sensor, {})
+        port.write(data)
+        await port.drain()
+        await asyncio.sleep(1)
+
     def __init__(self, rxpin=32, txpin=33, uart=1):
         self.sensor = UART(uart)
         self.sensor.init(baudrate=9600, bits=8, parity=None, stop=1, rx=rxpin, tx=txpin)
         self.pms_dictionary = None
         self.last_read = 0
         self.startup_time = utime.time()
-        self.read_interval = 10
+        self.read_interval = 30
         self.debug = False
-        active_mode_command = bytearray([0x42, 0x4d, 0xe1, 0x01, 0x00, 0x00, 0x00, 0x00])
+        wake_up_command = bytearray([0x42, 0x4d, 0xe4, 0x00, 0x01, 0x00, 0x00, 0x00])
+        checksum = self.calculate_checksum(wake_up_command)
+        self.PMS_WAKE_UP = wake_up_command + bytearray([checksum >> 8, checksum & 0xFF])
+        active_mode_command = bytearray([0x42, 0x4d, 0xe1, 0x00, 0x01, 0x00, 0x00, 0x00])
         checksum = self.calculate_checksum(active_mode_command)
         self.PMS_ACTIVE_MODE = active_mode_command + bytearray([checksum >> 8, checksum & 0xFF])
-
-    async def writer(self, data):
-        port = asyncio.StreamWriter(self.sensor, {})
-        port.write(data)
-        await port.drain()
+        # Wake up and set active mode
+        self.writer(self.PMS_WAKE_UP)
+        self.writer(self.PMS_ACTIVE_MODE)
 
     async def reader(self, chars):
         self.last_read = utime.time()
         port = asyncio.StreamReader(self.sensor)
         try:
             data = await port.readexactly(chars)
-            if self.debug is True:
-                print("PMS reader data %s" % data)
             if len(data) == int(chars):
+                if self.debug is True:
+                    print("PMS reader data %s" % data)
                 return data
             else:
                 return False
@@ -74,8 +81,6 @@ class PSensorPMS9103M:
         return True
 
     async def read_async_loop(self):
-        # Set active mode
-        await self.writer(self.PMS_ACTIVE_MODE)
 
         while True:
 

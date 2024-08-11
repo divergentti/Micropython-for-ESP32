@@ -26,7 +26,8 @@ class MHZ19bCO2:
 
     # Default UART2, rx=16, tx=17, you shall change these in the call
     def __init__(self, uart=2, rxpin=25, txpin=27):
-        self.sensor = UART(uart, baudrate=9600, bits=8, parity=None, stop=1, rx=rxpin, tx=txpin)
+        self.sensor = UART(uart)
+        self.sensor.init(baudrate=9600, bits=8, parity=None, stop=1, tx=txpin, rx=rxpin)
         self.zeropoint_calibrated = False
         self.co2_value = None
         self.co2_averages = []
@@ -47,6 +48,7 @@ class MHZ19bCO2:
         self.MEASURING_RANGE_0_2000PPM = bytearray(b'\xFF\x01\x99\x00\x00\x00\x07\xD0\x8F')
         self.MEASURING_RANGE_0_5000PPM = bytearray(b'\xFF\x01\x99\x00\x00\x00\x13\x88\xCB')
         self.MEASURING_RANGE_0_10000PPM = bytearray(b'\xFF\x01\x99\x00\x00\x00\x27\x10\x2F')
+        self.debug = False
 
     async def writer(self, data):
         port = asyncio.StreamWriter(self.sensor, {})
@@ -57,6 +59,8 @@ class MHZ19bCO2:
     async def reader(self, chars):
         port = asyncio.StreamReader(self.sensor)
         data = await port.readexactly(chars)
+        if self.debug is True:
+            print("MHZ reader data %s" % data)
         return data
 
     async def read_co2_loop(self):

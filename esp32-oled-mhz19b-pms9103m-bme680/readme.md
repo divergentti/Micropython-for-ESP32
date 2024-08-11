@@ -1,3 +1,8 @@
+11.8.2024:
+- added debugging option for PMS9103M and MHZ drivers
+- added active mode command for PMS9103M
+- still issues with PMS values, keeps 0 ... perhaps faulty sensor
+
 10.8.2024:
 - added startup timer to PMS9103M_AS.py
 - fixed parameters.py UART ports

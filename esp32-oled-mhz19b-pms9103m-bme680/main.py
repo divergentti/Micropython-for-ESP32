@@ -6,7 +6,7 @@ See documentation at GitHub.
 
 For webrepl, remember to execute import webrepl_setup one time.
 
-Version 0.31 Jari Hiltunen -  10.8.2024
+Version 0.32 Jari Hiltunen -  11.8.2024
 """
 import json
 from machine import SoftI2C, Pin, freq, reset, ADC, TouchPad
@@ -444,6 +444,7 @@ freq(80000000)
 # Particle sensor - keep this first!
 try:
     pms = PARTS.PSensorPMS9103M(uart=PMS_UART, rxpin=PMS_RX, txpin=PMS_TX)
+    pms.debug = True
     aq = AirQuality(pms)
 except OSError as err:
     log_errors("Error: %s - Particle sensor init error!" % err)
@@ -464,10 +465,10 @@ except OSError as err:  # open failed
         print("Error: %s - BME sensor init error!", err)
     bme_s_f = True
 
-
 # CO2 sensor
 try:
     co2s = CO2.MHZ19bCO2(uart=MH_UART, rxpin=MH_RX, txpin=MH_TX)
+    co2s.debug = False
 except OSError as err:
     log_errors("Error: %s - MHZ19 sensor init error!" % err)
     if deb_scr_a == 1:

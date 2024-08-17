@@ -2,11 +2,13 @@
 This script is used for I2C connected OLED display, BME680 temperature/rh/pressure/voc sensor
 MH-Z19B CO2 NDIR-sensor, PMS9103M particle sensor. Asynchronous code.
 
+Tested with Chip ESP32-D0WD-V3 (revision v3.1) & ESP32_GENERIC-20240602-v1.23.0.bin
+
 See documentation at GitHub.
 
 For webrepl, remember to execute import webrepl_setup one time.
 
-Version 0.32 Jari Hiltunen -  11.8.2024
+Version 0.33 Jari Hiltunen -  17.8.2024
 """
 import json
 from machine import SoftI2C, Pin, freq, reset, ADC, TouchPad
@@ -160,7 +162,9 @@ mhz19_f = False
 pms_f = False
 scr_f = False
 mqtt_last_update = 0
-read_errors = 0
+pms_read_errors = 0
+mhz_read_errors = 0
+bme_read_errors = 0
 
 
 # For MQTT_AS
@@ -422,7 +426,9 @@ async def show_what_i_do():
             print("   %s < 5.0 & %s < 10.0" % (pms.pms_dictionary['PCNT_5_0'], pms.pms_dictionary['PCNT_10_0']))
         print("3 ---------FAULTS------------- 3")
         print("   Last error : %s " % last_error)
-        print("   Read errors: %s" % read_errors)
+        print("   BME read errors: %s" % bme_read_errors)
+        print("   MHZ read errors: %s" % mhz_read_errors)
+        print("   PMS read errors: %s" % pms_read_errors)
         if bme_s_f:
             print("BME680 sensor faulty!")
         if mhz19_f:
@@ -438,12 +444,12 @@ async def show_what_i_do():
 
 # Adjust speed to low heat production, max 240000000, normal 160000000, min with Wi-Fi 80000000
 #  freq(240000000)
-freq(80000000)
-# freq(160000000)
+# freq(80000000)
+freq(160000000)
 
 # Particle sensor - keep this first!
 try:
-    pms = PARTS.PSensorPMS9103M(uart=PMS_UART, rxpin=PMS_RX, txpin=PMS_TX)
+    pms = PARTS.PMS(rxpin=PMS_RX, txpin=PMS_TX, uart=PMS_UART)
     pms.debug = True
     aq = AirQuality(pms)
 except OSError as err:
@@ -452,8 +458,7 @@ except OSError as err:
         print("Error: %s - Particle sensor init error!" % err)
     pms_f = True
 
-# Network handshake
-net = WIFINET.ConnectWiFi(sid1, pw1, sid2, pw2, ntp_s, dhcp_n, start_wbl, webrepl_pwd)
+
 i2c = SoftI2C(scl=Pin(I2C_SCL_PIN), sda=Pin(I2C_SDA_PIN))
 
 # BME-sensor
@@ -465,16 +470,15 @@ except OSError as err:  # open failed
         print("Error: %s - BME sensor init error!", err)
     bme_s_f = True
 
+
 # CO2 sensor
 try:
     co2s = CO2.MHZ19bCO2(uart=MH_UART, rxpin=MH_RX, txpin=MH_TX)
-    co2s.debug = False
 except OSError as err:
     log_errors("Error: %s - MHZ19 sensor init error!" % err)
     if deb_scr_a == 1:
         print("Error: %s - MHZ19 sensor init error!" % err)
     mhz19_f = True
-
 
 # Display
 try:
@@ -488,6 +492,10 @@ except OSError as err:
 # Touch thing - future reservation to activate the screen
 # touch = TouchPad(Pin(TOUCH_PIN))
 
+# Network handshake
+if start_net == 1:
+    net = WIFINET.ConnectWiFi(sid1, pw1, sid2, pw2, ntp_s, dhcp_n, start_wbl, webrepl_pwd)
+
 
 async def upd_status_loop():
     # Other sensor loops are in their drivers, this is for BME
@@ -495,7 +503,7 @@ async def upd_status_loop():
     global rh_average
     global pressure_average
     global gas_average
-    global read_errors
+    global bme_read_errors
     temp_list = []
     rh_list = []
     press_list = []
@@ -509,7 +517,7 @@ async def upd_status_loop():
                 press_list.append(round(float(bmes.pressure)) + press_corr)
                 gas_list.append(round(float(bmes.gas)))
             except ValueError as err:
-                read_errors = +1
+                bme_read_errors = +1
                 if deb_scr_a == 1:
                     print("BME sensor loop error: %s" % err)
                     log_errors("BME se sensor loop error" % err)
@@ -677,7 +685,7 @@ async def disp_l():
             await display.txt_2_r("PM1.0:%s ATM:%s" % (str(pms.pms_dictionary['PM1_0']), str(pms.pms_dictionary['PM1_0_ATM'])), 2, 5)
             await display.txt_2_r("PM2.5:%s ATM:%s" % (str(pms.pms_dictionary['PM2_5']), str(pms.pms_dictionary['PM2_5_ATM'])), 3, 5)
             await display.txt_2_r("PM10: %s ATM:%s" % (str(pms.pms_dictionary['PM10_0']), str(pms.pms_dictionary['PM10_0_ATM'])), 4, 5)
-            await display.txt_2_r("PMErr:%s" % str(pms.pms_dictionary['ERROR']), 5, 5)
+            await display.txt_2_r("- ATM for AQI -", 5, 5)
             await display.act_scr()
             await asyncio.sleep(1)
 
@@ -693,24 +701,41 @@ async def disp_l():
             await asyncio.sleep(1)
 
         # page 4
+        if deb_scr_a is True:
+            await display.txt_2_r("WIFI:   %s" % net.strength, 0, 5)
+            await display.txt_2_r("WebRepl:%s" % net.webrepl_started, 1, 5)
+            await display.txt_2_r("IP:%s" % net.ip_a, 2, 5)
+            await display.txt_2_r("MQTT up:%s" % mqtt_up, 3, 5)
+            await display.txt_2_r("Uptime :%s" % broker_uptime, 4, 5)
+            await display.txt_2_r("Err:%s" % last_error, 5, 5)
+            await display.act_scr()
+            await asyncio.sleep(1)
 
-        await display.txt_2_r("WIFI:   %s" % net.strength, 0, 5)
-        await display.txt_2_r("WebRepl:%s" % net.webrepl_started, 1, 5)
-        await display.txt_2_r("MQTT up:%s" % mqtt_up, 2, 5)
-        await display.txt_2_r("ReadErr:%s" % read_errors, 3, 5)
-        await display.txt_2_r("Err:%s" % last_error, 4, 5)
-        await display.txt_2_r("Memfree:%s" % gc.mem_free(), 5, 5)
-        await display.act_scr()
-        await asyncio.sleep(1)
+        # page 5
+        if deb_scr_a is True:
+            await display.txt_2_r("BMEErrs:%s" % bme_read_errors, 0, 5)
+            await display.txt_2_r("PMSErrs:%s" % pms_read_errors, 1, 5)
+            await display.txt_2_r("MHZErrs:%s" % mhz_read_errors, 2, 5)
+            await display.txt_2_r("Memfree:%s" % gc.mem_free(), 3, 5)
+            await display.act_scr()
+            await asyncio.sleep(1)
 
 
 async def watchdog():
     #  Keep system up and running, else reboot and try to recover
-    global read_errors
+    global pms_read_errors
+    global mhz_read_errors
+    global bme_read_errors
+    global pms
+    global pms_f
+    global aq
+    global co2s
+    global mhz19_f
     last_temp = temp_average
     last_rh = rh_average
     last_press = pressure_average
     last_gas = gas_average
+
     if pms.pms_dictionary is not None:
         last_part_1 = pms.pms_dictionary['PM1_0']
     else:
@@ -721,60 +746,70 @@ async def watchdog():
         last_co2 = 0
 
     while True:
-        await asyncio.sleep(30 * 60)  # 30 minutes
+        await asyncio.sleep(10 * 60)  # 10 minutes
 
         if temp_average == last_temp:
-            read_errors += 1
+            bme_read_errors += 1
         else:
             last_temp = temp_average
 
         if rh_average == last_rh:
-            read_errors += 1
+            bme_read_errors += 1
         else:
             last_rh = rh_average
 
         if pressure_average == last_press:
-            read_errors += 1
+            bme_read_errors += 1
         else:
             last_press = pressure_average
 
         if gas_average == last_gas:
-            read_errors += 1
+            bme_read_errors += 1
         else:
             last_gas = gas_average
 
         if pms.pms_dictionary['PM1_0'] == last_part_1:
-            read_errors += 1
+            pms_read_errors += 1
         else:
             last_part_1 = pms.pms_dictionary['PM1_0']
 
         if co2s.co2_average is not None:
             if co2s.co2_average == last_co2:
-                read_errors += 1
+                mhz_read_errors += 1
             else:
                 last_co2 = co2s.co2_average
 
-        if read_errors >= 60:
-            log_errors("Sensor read errors exceeded 60, rebooting")
-            if deb_scr_a == 1:
-                print("Sensor read errors exceeded 60, rebooting")
-            await asyncio.sleep(10)
-            reset()
+        if pms_read_errors >= 10:
+            log_errors("PMS Read Errors exceeded maximum!")
+
+        if mhz_read_errors >= 10:
+            log_errors("MHZ Read Errors exceeded maximum!")
+
+        if bme_read_errors >= 60:
+            log_errors("BME Read Errors exceeded maximum!")
 
 
 async def main():
     loop = asyncio.get_event_loop()
-    if start_net == 1:
-        loop.create_task(net.net_upd_loop())
     if deb_scr_a == 1:
         loop.create_task(show_what_i_do())
+    if start_net == 1:
+        loop.create_task(net.net_upd_loop())
     if start_mqtt == 1:
         loop.create_task(mqtt_up_l())
+        await asyncio.sleep(1)
         loop.create_task(mqtt_pub_l())
-    loop.create_task(pms.read_async_loop())
-    loop.create_task(co2s.read_co2_loop())
-    loop.create_task(aq.upd_aq_loop())
-    loop.create_task(upd_status_loop())
+    if mhz19_f is False:
+        loop.create_task(co2s.read_co2_loop())
+        await asyncio.sleep(1)
+    if pms_f is False:
+        loop.create_task(pms.read_async_loop())
+        await asyncio.sleep(1)
+    if pms_f is False:
+        loop.create_task(aq.upd_aq_loop())
+        await asyncio.sleep(1)
+    if bme_s_f is False:
+        loop.create_task(upd_status_loop())
     loop.create_task(disp_l())
     loop.create_task(watchdog())
     loop.run_forever()

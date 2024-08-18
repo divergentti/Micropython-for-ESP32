@@ -10,7 +10,7 @@
   - for the Air Quality Index weed need ATM-values, which are always 0
   - following do not work
     
- 
+<code> 
 from machine import UART, Pin
 import utime
 import uasyncio as asyncio
@@ -138,7 +138,7 @@ pms_sensor = PMS(rxpin=16, txpin=17, uart=2)
 # Run the asynchronous read loop
 asyncio.run(pms_sensor.read_async_loop())
                       
-
+</code>
 
 11.8.2024:
 - added debugging option for PMS9103M and MHZ drivers

@@ -1,10 +1,6 @@
-# 18.08.2024 - Jari Hiltunen
-# In the main, loop.create_task(objectname.read_async_loop())
-
 from machine import UART, Pin
 import utime
 import uasyncio as asyncio
-
 
 class PMS:
     # Write commands:
@@ -33,11 +29,11 @@ class PMS:
     PCNT0_5_OFFSET = 20
     PCNT1_0_OFFSET = 22
     PCNT2_5_OFFSET = 24
-    PCNT5_0_OFFSET = 25
-    PCNT10_OFFSET = 26
-    VERSION_OFFSET = 28
-    ERROR_OFFSET = 30
-    MAX_DATA_LENGTH = 28
+    PCNT5_0_OFFSET = 26
+    PCNT10_OFFSET = 28
+    VERSION_OFFSET = 30
+    ERROR_OFFSET = 32
+    MAX_DATA_LENGTH = 32  # Adjusted to 32 as per CMD_READ_PASSIVE length
     READ_INTERVAL = 10
 
     @staticmethod
@@ -48,39 +44,45 @@ class PMS:
         return lrch, lrcl
 
     def verify_checksum(self, frame):
-        checksum = self.calculate_checksum(frame)
+        checksum = sum(frame[:-2]) & 0xFFFF
         return (frame[-2] << 8 | frame[-1]) == checksum
 
     async def writer(self, data):
-        port = asyncio.StreamWriter(self.sensor, {})
-        port.write(data)
-        await port.drain()
+        self.sensor.write(data)
         await asyncio.sleep(0.1)
 
     def __init__(self, rxpin=32, txpin=33, uart=1):
-        self.sensor = UART(uart)
-        self.sensor.init(baudrate=9600, bits=8, parity=None, stop=1, rx=Pin(rxpin), tx=Pin(txpin))
-        self.buffer = bytearray(PMS.MAX_DATA_LENGTH)
+        self.sensor = UART(uart, baudrate=9600, bits=8, parity=None, stop=1, rx=Pin(rxpin), tx=Pin(txpin))
+        self.buffer = bytearray(self.MAX_DATA_LENGTH)
         self.pms_dictionary = None
         self.last_read = 0
         self.startup_time = utime.time()
         self.read_interval = 30
         self.debug = False
-        self.wake_up()
-        self.enter_passive_mode()
+        asyncio.run(self.wake_up())
+        asyncio.run(self.enter_passive_mode())
 
     async def read_frame(self):
-        while self.sensor.any() < self.MAX_DATA_LENGTH:
-            await asyncio.sleep(0.1)
-        asyncio.StreamReader(self.sensor).readinto(self.buffer)
+        while True:
+            while self.sensor.any() < 2:
+                await asyncio.sleep(0.1)
+            if self.sensor.read(1)[0] == self.START_BYTE_1 and self.sensor.read(1)[0] == self.START_BYTE_2:
+                break
+
+        remaining_bytes = self.MAX_DATA_LENGTH - 2
+        self.buffer[0] = self.START_BYTE_1
+        self.buffer[1] = self.START_BYTE_2
+        self.sensor.readinto(self.buffer[2:], remaining_bytes)
+
+        if self.debug:
+            print("PMS buffer: %s" % self.buffer)
         return self.buffer
 
     async def read_pm_values(self):
         checksum_high, checksum_low = self.calculate_checksum(self.CMD_READ_PASSIVE)
         await self.writer(self.CMD_READ_PASSIVE + bytearray([checksum_high, checksum_low]))
         frame = await self.read_frame()
-        if self.debug is True:
-            print("PMS Frame: %s" % frame)
+
         if self.verify_checksum(frame):
             pm1 = frame[self.PM1_OFFSET] << 8 | frame[self.PM1_OFFSET + 1]
             pm1_atm = frame[self.PM1_ATM_OFFSET] << 8 | frame[self.PM1_ATM_OFFSET + 1]
@@ -116,7 +118,7 @@ class PMS:
             self.last_read = utime.time()
             return True
         else:
-            if self.debug is True:
+            if self.debug:
                 print("Error: Incomplete data frame.")
             return False
 
@@ -138,7 +140,7 @@ class PMS:
 
     async def read_async_loop(self):
         while True:
-            status = await self.read_pm_values()  # Await the coroutine
+            status = await self.read_pm_values()
             if self.debug:
                 print("PMS read status: %s" % status)
             await asyncio.sleep(self.READ_INTERVAL)

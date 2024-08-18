@@ -7,7 +7,136 @@
   - first two bytes should be frame length of data and check bytes
   - last two bytes are checksum low and high
   - practically I see that only PCNT < 0.3 and PCNT < 0.5 are read correctly, so the frame is messed up
-  - for the Air Quality Index weed need ATM-values, which are always 0                          
+  - for the Air Quality Index weed need ATM-values, which are always 0
+  - following do not work
+ 
+- from machine import UART, Pin
+import utime
+import uasyncio as asyncio
+
+class PMS:
+    CMD_WAKEUP = bytearray([0x42, 0x4d, 0xe4, 0x00, 0x01, 0x01, 0x74])
+    CMD_SLEEP = bytearray([0x42, 0x4d, 0xe4, 0x00, 0x00, 0x01, 0x73])
+    CMD_PASSIVE_MODE = bytearray([0x42, 0x4d, 0xe1, 0x00, 0x00, 0x01, 0x70])
+    CMD_READ_PASSIVE = bytearray([0x42, 0x4d, 0xe2, 0x00, 0x00, 0x01, 0x71])
+
+    START_BYTE_1 = 0x42
+    START_BYTE_2 = 0x4d
+    PM1_OFFSET = 6
+    PM2P5_OFFSET = 8
+    PM10_OFFSET = 10
+    PM1_ATM_OFFSET = 12
+    PM2P5_ATM_OFFSET = 14
+    PM10_ATM_OFFSET = 16
+    PCNT0_3_OFFSET = 18
+    PCNT0_5_OFFSET = 20
+    PCNT1_0_OFFSET = 22
+    PCNT2_5_OFFSET = 24
+    PCNT5_0_OFFSET = 26
+    PCNT10_OFFSET = 28
+    VERSION_OFFSET = 30
+    ERROR_OFFSET = 32
+    MAX_DATA_LENGTH = 32
+    READ_INTERVAL = 10
+
+    def verify_checksum(self, frame):
+        checksum = sum(frame[:-2]) & 0xFFFF
+        return (frame[-2] << 8 | frame[-1]) == checksum
+
+    async def writer(self, data):
+        self.sensor.write(data)
+        await asyncio.sleep(0.1)
+
+    def __init__(self, rxpin=16, txpin=17, uart=2):
+        self.sensor = UART(uart, baudrate=9600, bits=8, parity=None, stop=1, rx=Pin(rxpin), tx=Pin(txpin))
+        self.buffer = bytearray(self.MAX_DATA_LENGTH)
+        self.pms_dictionary = None
+        self.last_read = 0
+        self.startup_time = utime.time()
+        self.read_interval = 30
+        self.debug = False
+        asyncio.run(self.wake_up())
+        asyncio.run(self.enter_passive_mode())
+
+    async def read_pm_values(self):
+        port = asyncio.StreamReader(self.sensor)
+        await self.writer(self.CMD_READ_PASSIVE)
+        raw_data = await port.readexactly(self.MAX_DATA_LENGTH * 2)  # read more data to find the start bytes
+        if self.debug:
+            print("Raw data: %s" % raw_data)
+
+        # Look for the start bytes
+        start_idx = raw_data.find(b'\x42\x4d')
+        if start_idx == -1 or start_idx + self.MAX_DATA_LENGTH > len(raw_data):
+            if self.debug:
+                print("Error: Start bytes not found or incomplete data frame.")
+            return False
+
+        self.buffer = raw_data[start_idx:start_idx + self.MAX_DATA_LENGTH]
+        if self.debug:
+            print("PMS buffer: %s" % self.buffer)
+
+        if self.verify_checksum(self.buffer):
+            pm1 = self.buffer[self.PM1_OFFSET] << 8 | self.buffer[self.PM1_OFFSET + 1]
+            pm1_atm = self.buffer[self.PM1_ATM_OFFSET] << 8 | self.buffer[self.PM1_ATM_OFFSET + 1]
+            pm2_5 = self.buffer[self.PM2P5_OFFSET] << 8 | self.buffer[self.PM2P5_OFFSET + 1]
+            pm2_5_atm = self.buffer[self.PM2P5_ATM_OFFSET] << 8 | self.buffer[self.PM2P5_ATM_OFFSET + 1]
+            pm10 = self.buffer[self.PM10_OFFSET] << 8 | self.buffer[self.PM10_OFFSET + 1]
+            pm10_atm = self.buffer[self.PM10_ATM_OFFSET] << 8 | self.buffer[self.PM10_ATM_OFFSET + 1]
+            pcnt0_3 = self.buffer[self.PCNT0_3_OFFSET] << 8 | self.buffer[self.PCNT0_3_OFFSET + 1]
+            pcnt0_5 = self.buffer[self.PCNT0_5_OFFSET] << 8 | self.buffer[self.PCNT0_5_OFFSET + 1]
+            pcnt1_0 = self.buffer[self.PCNT1_0_OFFSET] << 8 | self.buffer[self.PCNT1_0_OFFSET + 1]
+            pcnt2_5 = self.buffer[self.PCNT2_5_OFFSET] << 8 | self.buffer[self.PCNT2_5_OFFSET + 1]
+            pcnt5_0 = self.buffer[self.PCNT5_0_OFFSET] << 8 | self.buffer[self.PCNT5_0_OFFSET + 1]
+            pcnt10 = self.buffer[self.PCNT10_OFFSET] << 8 | self.buffer[self.PCNT10_OFFSET + 1]
+            version = self.buffer[self.VERSION_OFFSET] << 8 | self.buffer[self.VERSION_OFFSET + 1]
+            error = self.buffer[self.ERROR_OFFSET] << 8 | self.buffer[self.ERROR_OFFSET + 1]
+
+            self.pms_dictionary = {
+                'PM1_0': pm1,
+                'PM2_5': pm2_5,
+                'PM10_0': pm10,
+                'PM1_0_ATM': pm1_atm,
+                'PM2_5_ATM': pm2_5_atm,
+                'PM10_0_ATM': pm10_atm,
+                'PCNT_0_3': pcnt0_3,
+                'PCNT_0_5': pcnt0_5,
+                'PCNT_1_0': pcnt1_0,
+                'PCNT_2_5': pcnt2_5,
+                'PCNT_5_0': pcnt5_0,
+                'PCNT_10_0': pcnt10,
+                'VERSION': version,
+                'ERROR': error
+            }
+            self.last_read = utime.time()
+            return True
+        else:
+            if self.debug:
+                print("Error: Incomplete data frame or checksum mismatch.")
+            return False
+
+    async def wake_up(self):
+        await self.writer(self.CMD_WAKEUP)
+
+    async def sleep(self):
+        await self.writer(self.CMD_SLEEP)
+
+    async def enter_passive_mode(self):
+        await self.writer(self.CMD_PASSIVE_MODE)
+
+    async def read_async_loop(self):
+        while True:
+            status = await self.read_pm_values()
+            if self.debug:
+                print("PMS read status: %s" % status)
+            await asyncio.sleep(self.READ_INTERVAL)
+
+# Initialize PMS sensor with appropriate UART pins
+pms_sensor = PMS(rxpin=16, txpin=17, uart=2)
+
+# Run the asynchronous read loop
+asyncio.run(pms_sensor.read_async_loop())
+                      
 
 
 11.8.2024:

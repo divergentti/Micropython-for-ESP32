@@ -1,3 +1,15 @@
+18.8.2024:
+- Trying to find out is PMS9103M issue with a hardware or my driver. Tested with passive and active modes. Active mode used in the PMS9103M_AS.py driver.
+- Debug explained (https://evelta.com/content/datasheets/203-PMS9003M.pdf):
+  - PMS reader data b'B' = start byte1 0x42
+  - PMS reader data b'M' = start byte2 0x4d and after this comes frame we are interested in
+  - PMS reader data b'\x00\x1c\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x1b\x00\n\x00\x00\x00\x00\x00\x00\x00\x00\x13\x00\x00\xe3'
+  - first two bytes should be frame length of data and check bytes
+  - last two bytes are checksum low and high
+  - practically I see that only PCNT < 0.3 and PCNT < 0.5 are read correctly, so the frame is messed up
+  - for the Air Quality Index weed need ATM-values, which are always 0                          
+
+
 11.8.2024:
 - added debugging option for PMS9103M and MHZ drivers
 - added active mode command for PMS9103M

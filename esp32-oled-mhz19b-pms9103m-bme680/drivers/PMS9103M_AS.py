@@ -79,7 +79,8 @@ class PMS:
         checksum_high, checksum_low = self.calculate_checksum(self.CMD_READ_PASSIVE)
         await self.writer(self.CMD_READ_PASSIVE + bytearray([checksum_high, checksum_low]))
         frame = await self.read_frame()
-
+        if self.debug is True:
+            print("PMS Frame: %s" % frame)
         if self.verify_checksum(frame):
             pm1 = frame[self.PM1_OFFSET] << 8 | frame[self.PM1_OFFSET + 1]
             pm1_atm = frame[self.PM1_ATM_OFFSET] << 8 | frame[self.PM1_ATM_OFFSET + 1]

@@ -9,8 +9,9 @@
   - practically I see that only PCNT < 0.3 and PCNT < 0.5 are read correctly, so the frame is messed up
   - for the Air Quality Index weed need ATM-values, which are always 0
   - following do not work
+    
  
-- from machine import UART, Pin
+from machine import UART, Pin
 import utime
 import uasyncio as asyncio
 

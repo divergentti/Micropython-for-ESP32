@@ -1,8 +1,7 @@
 """
-  19.01.2020: Jari Hiltunen
+  20.08.2024: Jari Hiltunen
 
-  Original https://github.com/pkucmus/micropython-pms7003/blob/master/pms7003.py
-  Modified for asyncronous StreamReader  16.01.2020 by Divergentti / Jari Hiltunen
+  Active mode UART driver for PMS9103M (and 7000 etc)
 
   Add loop into your code loop.create_task(objectname.read_async_loop())
 
@@ -35,15 +34,30 @@ class PMS:
     PMS_VERSION = 13
     PMS_ERROR = 14
     PMS_CHECKSUM = 15
+    PMS_ACTIVE_MODE = bytearray([0x42, 0x4d, 0xe1, 0x00, 0x01, 0x01, 0x71])
+    PMS_WAKEUP = bytearray([0x42, 0x4d, 0xe4, 0x00, 0x01, 0x01, 0x74])
+
 
     #  Default UART1, rx=32, tx=33. Don't use UART0 if you want to use REPL!
     def __init__(self, rxpin=16, txpin=17, uart=2):
         self.sensor = UART(uart, baudrate=9600, bits=8, parity=None, stop=1, rx=Pin(rxpin), tx=Pin(txpin))
         self.pms_dictionary = None
+        self.debug = False
+        asyncio.run(self.writer(self.PMS_WAKEUP))
+        if (self.reader(1) != 7) and (self.debug is True):
+            print("PMS Wakeup failed!")
+        asyncio.run(self.writer(self.PMS_ACTIVE_MODE))
+        if (self.reader(1) != 7) and (self.debug is True):
+            print("PMS Set Active failed!")
         self.startup_time = utime.time()
         self.read_time = 0
         self.read_interval = 30
-        self.debug = False
+
+    async def writer(self, data):
+        port = asyncio.StreamWriter(self.sensor, {})
+        port.write(data)
+        await port.drain()
+        await asyncio.sleep(2)
 
     async def reader(self, chars):
         port = asyncio.StreamReader(self.sensor)
@@ -110,4 +124,6 @@ class PMS:
             self.read_time = utime.time()
             if self.debug:
                 print("PMS Read at %s" % self.read_time)
+                if data[PMS.PMS_CHECKSUM] != 0:
+                    print("PMS reports error %s" % data[PMS.PMS_CHECKSUM])
             await asyncio.sleep(self.read_interval)

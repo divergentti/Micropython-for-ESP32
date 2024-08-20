@@ -124,6 +124,6 @@ class PMS:
             self.read_time = utime.time()
             if self.debug:
                 print("PMS Read at %s" % self.read_time)
-                if data[PMS.PMS_CHECKSUM] != 0:
-                    print("PMS reports error %s" % data[PMS.PMS_CHECKSUM])
+                if data[PMS.PMS_ERROR] != 0:
+                    print("PMS reports error %s" % data[PMS.PMS_ERROR])
             await asyncio.sleep(self.read_interval)

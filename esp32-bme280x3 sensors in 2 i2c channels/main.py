@@ -172,6 +172,7 @@ except OSError as e:
 async def read_sensors_loop():
     global sensor1tempave, sensor1rhave, sensor1presave, sensor2tempave, sensor2rhave, sensor2presave, \
         sensor3tempave, sensor3rhave, sensor3presave
+
     s1_temp_list = []
     s1_rh_list = []
     s1_press_list = []
@@ -182,62 +183,96 @@ async def read_sensors_loop():
     s3_rh_list = []
     s3_press_list = []
 
-    #  Read values from sensor once per second, add them to the array, delete oldest when size 10
+    s1_previous_temp = None
+    s1_previous_rh = None
+    s1_previous_press = None
+    s1_no_change_counter = 0
+
+    s2_previous_temp = None
+    s2_previous_rh = None
+    s2_previous_press = None
+    s2_no_change_counter = 0
+
+    s3_previous_temp = None
+    s3_previous_rh = None
+    s3_previous_press = None
+    s3_no_change_counter = 0
+
+    def update_lists(sensor_list, temp, rh, press, correction):
+        sensor_list[0].append(temp + correction)
+        sensor_list[1].append(rh + correction)
+        sensor_list[2].append(press + correction)
+        if len(sensor_list[0]) >= 10:
+            sensor_list[0].pop(0)
+        if len(sensor_list[1]) >= 10:
+            sensor_list[1].pop(0)
+        if len(sensor_list[2]) >= 10:
+            sensor_list[2].pop(0)
+
+    def calculate_average(sensor_list):
+        return (round(sum(sensor_list[0]) / len(sensor_list[0]), 1),
+                round(sum(sensor_list[1]) / len(sensor_list[1]), 1),
+                round(sum(sensor_list[2]) / len(sensor_list[2]), 1))
+
+    def check_for_changes(sensor_tempave, sensor_rhave, sensor_presave, previous_temp, previous_rh, previous_press, no_change_counter):
+        if sensor_tempave == previous_temp and sensor_rhave == previous_rh and sensor_presave == previous_press:
+            no_change_counter += 1
+        else:
+            no_change_counter = 0
+        return no_change_counter
+
     while True:
         if not sensor1faulty:
-            s1_temp_list.append(round(float(bmes.values[0][:-1]), 1) + TEMP_CORRECTION_1)
-            s1_rh_list.append(round(float(bmes.values[2][:-1]), 1) + RH_CORRECTION_1)
-            s1_press_list.append(round(float(bmes.values[1][:-3]), 1) + PRESSURE_CORRECTION_1)
+            update_lists([s1_temp_list, s1_rh_list, s1_press_list],
+                         round(float(bmes.values[0][:-1]), 1),
+                         round(float(bmes.values[2][:-1]), 1),
+                         round(float(bmes.values[1][:-3]), 1),
+                         TEMP_CORRECTION_1)
+
         if not sensor2faulty:
-            s2_temp_list.append(round(float(bmet.values[0][:-1]), 1) + TEMP_CORRECTION_2)
-            s2_rh_list.append(round(float(bmet.values[2][:-1]), 1) + RH_CORRECTION_2)
-            s2_press_list.append(round(float(bmet.values[1][:-3]), 1) + PRESSURE_CORRECTION_2)
+            update_lists([s2_temp_list, s2_rh_list, s2_press_list],
+                         round(float(bmet.values[0][:-1]), 1),
+                         round(float(bmet.values[2][:-1]), 1),
+                         round(float(bmet.values[1][:-3]), 1),
+                         TEMP_CORRECTION_2)
+
         if not sensor3faulty:
-            s3_temp_list.append(round(float(bmeu.values[0][:-1]), 1) + TEMP_CORRECTION_3)
-            s3_rh_list.append(round(float(bmeu.values[2][:-1]), 1) + RH_CORRECTION_3)
-            s3_press_list.append(round(float(bmeu.values[1][:-3]), 1) + PRESSURE_CORRECTION_3)
-        gc.collect()
-        gc.threshold(gc.mem_free() // 4 + gc.mem_alloc())
-        if len(s1_temp_list) >= 10:
-            s1_temp_list.pop(0)
-        if len(s1_rh_list) >= 10:
-            s1_rh_list.pop(0)
-        if len(s1_press_list) >= 10:
-            s1_press_list.pop(0)
-        if len(s2_temp_list) >= 10:
-            s2_temp_list.pop(0)
-        if len(s2_rh_list) >= 10:
-            s2_rh_list.pop(0)
-        if len(s2_press_list) >= 10:
-            s2_press_list.pop(0)
-        if len(s3_temp_list) >= 10:
-            s3_temp_list.pop(0)
-        if len(s3_rh_list) >= 10:
-            s3_rh_list.pop(0)
-        if len(s3_press_list) >= 10:
-            s3_press_list.pop(0)
+            update_lists([s3_temp_list, s3_rh_list, s3_press_list],
+                         round(float(bmeu.values[0][:-1]), 1),
+                         round(float(bmeu.values[2][:-1]), 1),
+                         round(float(bmeu.values[1][:-3]), 1),
+                         TEMP_CORRECTION_3)
 
         if len(s1_temp_list) > 1:
-            sensor1tempave = round(sum(s1_temp_list) / len(s1_temp_list), 1)
-        if len(s1_rh_list) > 1:
-            sensor1rhave = round(sum(s1_rh_list) / len(s1_rh_list), 1)
-        if len(s1_press_list) > 1:
-            sensor1presave = round(sum(s1_press_list) / len(s1_press_list), 1)
+            sensor1tempave, sensor1rhave, sensor1presave = calculate_average([s1_temp_list, s1_rh_list, s1_press_list])
         if len(s2_temp_list) > 1:
-            sensor2tempave = round(sum(s2_temp_list) / len(s2_temp_list), 1)
-        if len(s2_rh_list) > 1:
-            sensor2rhave = round(sum(s2_rh_list) / len(s2_rh_list), 1)
-        if len(s2_press_list) > 1:
-            sensor2presave = round(sum(s2_press_list) / len(s2_press_list), 1)
+            sensor2tempave, sensor2rhave, sensor2presave = calculate_average([s2_temp_list, s2_rh_list, s2_press_list])
         if len(s3_temp_list) > 1:
-            sensor3tempave = round(sum(s3_temp_list) / len(s3_temp_list), 1)
-        if len(s3_rh_list) > 1:
-            sensor3rhave = round(sum(s3_rh_list) / len(s3_rh_list), 1)
-        if len(s3_press_list) > 1:
-            sensor3presave = round(sum(s3_press_list) / len(s3_press_list), 1)
+            sensor3tempave, sensor3rhave, sensor3presave = calculate_average([s3_temp_list, s3_rh_list, s3_press_list])
+
+        s1_no_change_counter = check_for_changes(sensor1tempave, sensor1rhave, sensor1presave,
+                                                 s1_previous_temp, s1_previous_rh, s1_previous_press,
+                                                 s1_no_change_counter)
+        s2_no_change_counter = check_for_changes(sensor2tempave, sensor2rhave, sensor2presave,
+                                                 s2_previous_temp, s2_previous_rh, s2_previous_press,
+                                                 s2_no_change_counter)
+        s3_no_change_counter = check_for_changes(sensor3tempave, sensor3rhave, sensor3presave,
+                                                 s3_previous_temp, s3_previous_rh, s3_previous_press,
+                                                 s3_no_change_counter)
+
+        s1_previous_temp, s1_previous_rh, s1_previous_press = sensor1tempave, sensor1rhave, sensor1presave
+        s2_previous_temp, s2_previous_rh, s2_previous_press = sensor2tempave, sensor2rhave, sensor2presave
+        s3_previous_temp, s3_previous_rh, s3_previous_press = sensor3tempave, sensor3rhave, sensor3presave
+
+        if s1_no_change_counter > 360:
+            reset()
+        if s2_no_change_counter > 360:
+            reset()
+        if s3_no_change_counter > 360:
+            reset()
+
         gc.collect()
-        gc.threshold(gc.mem_free() // 4 + gc.mem_alloc())
-        await asyncio.sleep(1)
+        await asyncio.sleep(10)
 
 
 async def mqtt_up_loop():

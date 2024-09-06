@@ -43,15 +43,18 @@ class PMS:
         self.sensor = UART(uart, baudrate=9600, bits=8, parity=None, stop=1, rx=Pin(rxpin), tx=Pin(txpin))
         self.pms_dictionary = None
         self.debug = False
+        self.startup_time = utime.time()
+        self.read_time = 0
+        self.read_interval = 10
+
+    async def wake_and_set_active(self):
+        # This is future reservation - not used
         asyncio.run(self.writer(self.PMS_WAKEUP))
         if (self.reader(1) != 7) and (self.debug is True):
             print("PMS Wakeup failed!")
         asyncio.run(self.writer(self.PMS_ACTIVE_MODE))
         if (self.reader(1) != 7) and (self.debug is True):
             print("PMS Set Active failed!")
-        self.startup_time = utime.time()
-        self.read_time = 0
-        self.read_interval = 30
 
     async def writer(self, data):
         port = asyncio.StreamWriter(self.sensor, {})
@@ -59,51 +62,75 @@ class PMS:
         await port.drain()
         await asyncio.sleep(2)
 
-    async def reader(self, chars):
+    async def reader(self, chars, timeout=5):
         port = asyncio.StreamReader(self.sensor)
-        try:
-            data = await port.readexactly(chars)
-            if self.debug:
-                print("PMS data in %s" % data)
-            if len(data) == int(chars):
-                return data
-            else:
+        start_time = utime.time()  # Get the current time
+        data = bytearray()
+
+        while len(data) < chars:
+            # Check if timeout has passed
+            if utime.time() - start_time >= timeout:
+                if self.debug:
+                    print(f"Timeout occurred after {timeout} seconds")
+                return False  # Return False if timeout occurs
+
+            try:
+                chunk = await port.read(1)  # Read byte by byte
+                if chunk:
+                    data += chunk
+            except MemoryError:
+                gc.collect()
                 return False
-        except MemoryError:
-            gc.collect()
-            return False
+
+        if len(data) == chars:
+            if self.debug:
+                print(f"Data received: {data}")
+            return data
+        return False  # In case of incomplete read
 
     @staticmethod
     def _assert_byte(byte, expected):
-        if byte is None or len(byte) < 1 or ord(byte) != expected:
+        if byte is None or len(byte) < 1 or byte[0] != expected:  # Access the first element of the bytearray
             return False
         return True
 
     async def read_async_loop(self):
-
         while True:
-
             first_byte = await self.reader(1)
             if not self._assert_byte(first_byte, PMS.START_BYTE_1):
+                if self.debug:
+                    print(f"Invalid first byte: {first_byte}")
                 continue
 
             second_byte = await self.reader(1)
             if not self._assert_byte(second_byte, PMS.START_BYTE_2):
+                if self.debug:
+                    print(f"Invalid second byte: {second_byte}")
                 continue
 
-            # we are reading 30 bytes left
+            # Reading 30 more bytes
             read_bytes = await self.reader(30)
             if len(read_bytes) < 30:
+                if self.debug:
+                    print(f"Incomplete read: {read_bytes}")
                 continue
 
+            if self.debug:
+                print(f"Raw data received: {read_bytes}")
+
+            # Unpack the data
             data = struct.unpack('!HHHHHHHHHHHHHBBH', read_bytes)
 
+            # Calculate checksum
             checksum = PMS.START_BYTE_1 + PMS.START_BYTE_2
             checksum += sum(read_bytes[:28])
 
             if checksum != data[PMS.PMS_CHECKSUM]:
+                if self.debug:
+                    print(f"Checksum error: {checksum} != {data[PMS.PMS_CHECKSUM]}")
                 continue
 
+            # Populate the dictionary
             self.pms_dictionary = {
                 'FRAME_LENGTH': data[PMS.PMS_FRAME_LENGTH],
                 'PM1_0': data[PMS.PMS_PM1_0],
@@ -120,10 +147,12 @@ class PMS:
                 'PCNT_10_0': data[PMS.PMS_PCNT_10_0],
                 'VERSION': data[PMS.PMS_VERSION],
                 'ERROR': data[PMS.PMS_ERROR],
-                'CHECKSUM': data[PMS.PMS_CHECKSUM], }
+                'CHECKSUM': data[PMS.PMS_CHECKSUM],
+            }
             self.read_time = utime.time()
             if self.debug:
-                print("PMS Read at %s" % self.read_time)
+                print(f"PMS Read at {self.read_time}, data: {self.pms_dictionary}")
                 if data[PMS.PMS_ERROR] != 0:
-                    print("PMS reports error %s" % data[PMS.PMS_ERROR])
+                    print(f"PMS reports error {data[PMS.PMS_ERROR]}")
             await asyncio.sleep(self.read_interval)
+

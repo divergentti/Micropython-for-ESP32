@@ -1,3 +1,14 @@
+6.9.2024:
+- New PMS9103M arrived, but now AQ index is calculated, because PM-values are read, but they keep low and no PCNT
+- Reworked the main.py
+- Reworked PMS9103M_as.py
+- Waiting advice from manufacturer. Perhaps Aliexpress sell some fake sensors?
+Data received: bytearray(b'B')
+Data received: bytearray(b'M')
+Data received: bytearray(b'\x00\x1c\x00\x02\x00\x04\x00\x05\x00\x02\x00\x04\x00\x05\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\xc1')
+Raw data received: bytearray(b'\x00\x1c\x00\x02\x00\x04\x00\x05\x00\x02\x00\x04\x00\x05\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\xc1')
+PMS Read at 778944757, data: {'PM2_5': 4, 'PM1_0_ATM': 2, 'PM10_0_ATM': 5, 'VERSION': 0, 'ERROR': 0, 'CHECKSUM': 193, 'PM1_0': 2, 'PM10_0': 5, 'PM2_5_ATM': 4, 'PCNT_0_5': 0, 'PCNT_5_0': 0, 'FRAME_LENGTH': 28, 'PCNT_2_5': 0, 'PCNT_1_0': 0, 'PCNT_10_0': 0, 'PCNT_0_3': 0}
+
 18.8.2024:
 - Trying to find out is PMS9103M issue with a hardware or my driver. Tested with passive and active modes. Active mode used in the PMS9103M_AS.py driver.
 - Debug explained (https://evelta.com/content/datasheets/203-PMS9003M.pdf):

@@ -19,12 +19,10 @@ TypeError: can't convert Pin to int
 - Chip is ESP32-D0WD-V3 (revision v3.1)
 - Features: WiFi, BT, Dual Core, 240MHz, VRef calibration in efuse, Coding Scheme None
 - checked Aliexpress order in the Specifications is different VCC than in datasheet. Minimun VCC is 4.90 volts!
-- used USB power suply, now VCC is 4.98 volts = in specs
+- used USB power suply, now VCC is 4.98 volts = in specs but need webrepl for remote console
 - found WIFICONN_AS.py issue with webrepl startup. The runtimeconfig.json gives value 1 for true, the contructor expected True or False
 - fixed contructor self.starwbr = bool(startwebrepl)
-
-
-
+- issue continues with 4.98 volts now when webrepl works
 
 
 6.9.2024:
@@ -48,10 +46,9 @@ PMS Read at 778944757, data: {'PM2_5': 4, 'PM1_0_ATM': 2, 'PM10_0_ATM': 5, 'VERS
   - last two bytes are checksum low and high
   - practically I see that only PCNT < 0.3 and PCNT < 0.5 are read correctly, so the frame is messed up
   - for the Air Quality Index weed need ATM-values, which are always 0
-  - following do not work
+  - following code (driver) do not work:
     
-
-```yaml annotate
+```
 from machine import UART, Pin
 import utime
 import uasyncio as asyncio
@@ -178,7 +175,8 @@ pms_sensor = PMS(rxpin=16, txpin=17, uart=2)
 
 # Run the asynchronous read loop
 asyncio.run(pms_sensor.read_async_loop())
-                      
+  
+```yaml                   
 
 
 11.8.2024:

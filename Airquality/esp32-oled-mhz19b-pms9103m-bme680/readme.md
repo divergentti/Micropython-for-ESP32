@@ -1,3 +1,32 @@
+7.9.2024
+
+- replaced UART2 pins from 16 and 17 to 4 and 5 - same bad results
+- replaced flat cable to the sensor and used other GND pin, same bad results
+- measured VCC and it is 4.68 volts, datasheet minimun 4.5V, should be OK (connected to PC USB port)
+- erased ESP32 and testted without any other code but PMS-code, same bad results
+- erased ESP32 and tested with esp32-idf4-20200902-v1.13.bin but this is too old, main.py code logf.write(f"{resolve_date()[0]},{str(err_in)}\r\n") SyntaxError: invalid syntax
+- erased ESP32 and tested with version  ESP32_GENERIC-20220618-v1.19.1.bin, now error:
+
+Traceback (most recent call last):
+  File "main.py", line 479, in <module>
+  File "main.py", line 466, in init_sensor
+  File "main.py", line 478, in <lambda>
+  File "drivers/PMS9103M_AS.py", line 43, in __init__
+TypeError: can't convert Pin to int
+
+- removed Pin statements from the PMS9103M_as.py and main.py, still bad readings from the sensor (= only low PM-values)
+- erased ESP32 and installed ESP32_GENERIC-20240602-v1.23.0
+- Chip is ESP32-D0WD-V3 (revision v3.1)
+- Features: WiFi, BT, Dual Core, 240MHz, VRef calibration in efuse, Coding Scheme None
+- checked Aliexpress order in the Specifications is different VCC than in datasheet. Minimun VCC is 4.90 volts!
+- used USB power suply, now VCC is 4.98 volts = in specs
+- found WIFICONN_AS.py issue with webrepl startup. The runtimeconfig.json gives value 1 for true, the contructor expected True or False
+- fixed contructor self.starwbr = bool(startwebrepl)
+
+
+
+
+
 6.9.2024:
 - New PMS9103M arrived, but now AQ index is calculated, because PM-values are read, but they keep low and no PCNT
 - Reworked the main.py
@@ -150,7 +179,7 @@ pms_sensor = PMS(rxpin=16, txpin=17, uart=2)
 # Run the asynchronous read loop
 asyncio.run(pms_sensor.read_async_loop())
                       
-'''
+
 
 11.8.2024:
 - added debugging option for PMS9103M and MHZ drivers

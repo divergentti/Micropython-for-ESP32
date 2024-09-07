@@ -1,8 +1,9 @@
-# This class is for asynchronous WiFi connection. 6.6.2023: Jari Hiltunen / Divergentti
+# This class is for asynchronous WiFi connection. 7.9.2024: Jari Hiltunen / Divergentti
 # Tries to connect to 2 different APs
 # in main.py:
 # net = WIFINET.ConnectWiFi(ssid1, pw for ssid1, ssid2, pw for 2, ntpserver  name, dhcpname, startwebrepl, wbpassword)
 # ... your asynchronous code ...
+#
 # async def main():
 #   loop = asyncio.get_event_loop()
 #   loop.create_task(net.net_upd_loop())
@@ -27,7 +28,7 @@ class ConnectWiFi(object):
         self.pw2 = password2
         self.ntps = ntpserver
         self.dhcpn = dhcpname
-        self.starwbr = startwebrepl
+        self.starwbr = bool(startwebrepl)
         self.webrplpwd = webreplpwd
         self.net_ok = False
         self.password = None
@@ -38,6 +39,7 @@ class ConnectWiFi(object):
         self.webrepl_started = False
         self.startup_time = None
 
+
     async def net_upd_loop(self):
         while True:
             if not self.net_ok:
@@ -45,10 +47,9 @@ class ConnectWiFi(object):
             await asyncio.sleep(1)
 
     async def start_webrepl(self):
-        if (self.webrepl_started is False) and (self.starwbr is True) and (self.webrplpwd is not None):
+        if not self.webrepl_started:
             try:
                 webrepl.start(password=self.webrplpwd)
-                webrepl.start()
                 self.webrepl_started = True
                 return True
             except OSError as e:
@@ -85,11 +86,8 @@ class ConnectWiFi(object):
             print("s_nets: either AP1 or AP2 not found in range!")
             return False
 
-
     async def connect_to_network(self):
-        try:
-            await self.s_nets()
-        except False:
+        if not await self.s_nets():
             return False
         if self.dhcpn is not None and (len(self.dhcpn) < 15):
             # Since version 1.2 <15 characters
@@ -97,9 +95,6 @@ class ConnectWiFi(object):
         try:
             network.WLAN(network.STA_IF).connect(self.use_ssid, self.u_pwd)
             await asyncio.sleep(10)
-        except network.WLAN(network.STA_IF).ifconfig()[0] == '0.0.0.0':
-            self.net_ok = False
-            return False
         except OSError as e:
             return False
         finally:

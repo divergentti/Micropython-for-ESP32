@@ -176,8 +176,7 @@ pms_sensor = PMS(rxpin=16, txpin=17, uart=2)
 # Run the asynchronous read loop
 asyncio.run(pms_sensor.read_async_loop())
   
-```yaml                   
-
+```
 
 11.8.2024:
 - added debugging option for PMS9103M and MHZ drivers
